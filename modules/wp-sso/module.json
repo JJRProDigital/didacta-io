@@ -1,0 +1,34 @@
+{
+  "name": "mod.wp-sso",
+  "version": "0.2.0",
+  "edition": "community",
+  "displayName": "SSO desde WordPress",
+  "description": "Permite que los usuarios autenticados en WordPress entren a Didacta sin volver a iniciar sesión. WordPress firma un token corto (HMAC) y Didacta lo verifica y emite la sesión.",
+  "author": "VA360 LABS",
+  "category": "integration",
+  "coreVersionRequired": "^0.0.1",
+  "tablePrefix": "mod_wp_sso_",
+  "apiNamespace": "/modules/wp-sso",
+  "permissions": [
+    {
+      "name": "wp-sso.callback.exchange",
+      "description": "Intercambiar el token de WordPress por una sesión Didacta."
+    }
+  ],
+  "eventsEmitted": [
+    {
+      "name": "wp-sso.signin.success",
+      "description": "Un usuario entró por SSO desde WordPress."
+    },
+    {
+      "name": "wp-sso.user.provisioned",
+      "description": "Se creó un usuario nuevo en el primer SSO desde WordPress."
+    },
+    {
+      "name": "wp-sso.account.linked",
+      "description": "Se vinculó la cuenta de WordPress con un usuario existente de Didacta."
+    }
+  ],
+  "eventsConsumed": [],
+  "surfaces": {}
+}
