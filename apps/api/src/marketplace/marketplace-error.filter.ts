@@ -6,9 +6,10 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpStatus, Logger } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import { MarketplacePackageError, type MarketplaceErrorCode } from './module-package.errors';
+import { moduleErrorBody } from '../common/module-error-body';
 
 /// Mapea cada código de `MarketplacePackageError` al status HTTP que el
-/// equipo web espera (ver `docs/MARKETPLACE-WEB-SPEC.md` §5.2). El cuerpo
+/// equipo web espera. El cuerpo
 /// devuelto siempre incluye `code` para que el cliente programe contra él
 /// sin parsear el mensaje.
 const STATUS_BY_CODE: Record<MarketplaceErrorCode, number> = {
@@ -49,11 +50,6 @@ export class MarketplaceErrorFilter implements ExceptionFilter<MarketplacePackag
       );
     }
 
-    reply.status(status).send({
-      statusCode: status,
-      code: exception.code,
-      message: exception.message,
-      details: exception.details,
-    });
+    reply.status(status).send(moduleErrorBody(exception, status, { details: exception.details }));
   }
 }

@@ -27,7 +27,6 @@ import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { ZodValidationPipe } from '../../auth/zod-validation.pipe';
 import type { SessionClaims } from '../../auth/token.service';
 import { extractClientContext } from '../../auth/client-context';
-import { resolveWebBaseUrl } from '../../common/resolve-web-base-url';
 import { runAsTenant } from '../../tenancy/tenant-context.storage';
 import { TenantResolverService } from '../../tenancy/tenant-resolver.service';
 import { ModuleRegistryService } from '../module-registry.service';
@@ -100,7 +99,7 @@ export class ReferralsController {
   async me(@CurrentUser() user: SessionClaims | undefined, @Req() req: FastifyRequest) {
     const u = this.requireUser(user);
     const { code } = await this.registry.getReferralsService().getOrCreateCode(u.tenantId, u.sub);
-    const base = resolveWebBaseUrl(req);
+    const base = await this.tenantResolver.resolveTenantWebBaseUrl(u.tenantId, req);
     return { code, url: `${base}/unete?ref=${encodeURIComponent(code)}` };
   }
 
@@ -250,7 +249,10 @@ export class ReferralsController {
   private requireAdmin(user: SessionClaims | undefined): SessionClaims {
     const u = this.requireUser(user);
     if (!u.roles.some((r) => ADMIN_ROLES.has(r))) {
-      throw new ForbiddenException('Sólo super_admin / tenant_admin pueden gestionar referidos.');
+      throw new ForbiddenException({
+        message: 'Sólo super_admin / tenant_admin pueden gestionar referidos.',
+        code: 'REFERRALS_ADMIN_REQUIRED',
+      });
     }
     return u;
   }
@@ -261,7 +263,10 @@ export class ReferralsController {
     const hostStr = Array.isArray(host) ? host[0] : host;
     const tenant = await this.tenantResolver.resolveByHost(hostStr);
     if (!tenant) {
-      throw new ForbiddenException('Comunidad no encontrada para este dominio.');
+      throw new ForbiddenException({
+        message: 'Comunidad no encontrada para este dominio.',
+        code: 'REFERRALS_TENANT_NOT_FOUND',
+      });
     }
     return tenant.id;
   }

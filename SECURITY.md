@@ -51,7 +51,7 @@ Cuando salgamos a beta y `v1.0.0`, esta tabla se actualizará con la política L
 
 No tenemos programa formal de bug bounty durante alpha. Cuando publiquemos `v1.0.0` evaluaremos lanzar uno (probablemente con HackerOne o Intigriti).
 
-Por ahora: agradecimiento público en `SECURITY-CREDITS.md` (opt-in) y, en algunos casos, swag de Didacta o invitación a Cloud gratis durante 6 meses.
+Por ahora: agradecimiento público en `SECURITY-CREDITS.md` (opt-in; ese archivo se crea con el primer reporte acreditado) y, en algunos casos, swag de Didacta o invitación a Cloud gratis durante 6 meses.
 
 ## Comunicación con clientes Enterprise
 

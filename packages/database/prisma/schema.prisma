@@ -6,7 +6,6 @@
 // - Sin FKs cross-module (los módulos usan IDs lógicos)
 // - Append-only en AuditLog (triggers en rls.sql)
 // - Soft delete preferido (deletedAt)
-// Referencia: docs/PRD.md §9.1, docs/ARQUITECTURA-MODULAR.md §4.1
 // ============================================================================
 
 generator client {
@@ -2451,6 +2450,34 @@ model InstallationRegistry {
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
   @@map("core_installation_registry")
+}
+
+// ============================================================================
+// CORE — INSTANCE SETTINGS (10ª tabla global, sin tenant_id)
+// ----------------------------------------------------------------------------
+// Configuración de la INSTALACIÓN (no de un tenant): licencia, telemetría,
+// rate limits, crons. Mismo patrón de cifrado que TenantSetting, pero sin
+// tenant_id — es una decisión del operador de la instalación, no del negocio
+// de un tenant. Precedencia: env siempre gana sobre esta tabla (un operador
+// que fija la variable no puede ser pisado desde el panel).
+// ============================================================================
+
+model InstanceSetting {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Namespace lógico: "license", "telemetry", "rate-limit", "jobs".
+  scope       String   @db.VarChar(100)
+  key         String   @db.VarChar(200)
+  isSecret    Boolean  @default(false) @map("is_secret")
+  valueJson   Json?    @map("value_json")
+  valueCipher Bytes?   @map("value_cipher")
+  valueIv     Bytes?   @map("value_iv")
+  valueTag    Bytes?   @map("value_tag")
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([scope, key])
+  @@map("core_instance_setting")
 }
 
 // ============================================================================

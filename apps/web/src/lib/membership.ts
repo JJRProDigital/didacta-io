@@ -12,6 +12,7 @@
  */
 
 import { apiFetch } from './api-client';
+import { formatCents as formatCentsI18n, type FmtOverrides } from './i18n/format';
 
 const PUBLIC_BASE = '/api/v1/membership';
 const ADMIN_BASE = '/api/v1/membership/admin';
@@ -170,37 +171,21 @@ export const membershipAdminApi = {
 
 // ── Helpers de formato ───────────────────────────────────────────────────────
 
-/** "999,00 €" a partir de céntimos. */
-export function formatCents(cents: number, currency = 'eur'): string {
-  return new Intl.NumberFormat('es-ES', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-    minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
-  }).format(cents / 100);
-}
-
-/** Etiqueta de periodicidad: "/mes", "/trimestre", …, "/N meses". */
-export function intervalSuffix(intervalMonths: number): string {
-  if (intervalMonths === 12) return '/año';
-  if (intervalMonths === 6) return '/semestre';
-  if (intervalMonths === 3) return '/trimestre';
-  if (intervalMonths === 1) return '/mes';
-  return `/${intervalMonths} meses`;
-}
-
-/** Nombre largo: "Suscripción mensual/trimestral/…/cada N meses". */
-export function intervalDescription(intervalMonths: number): string {
-  if (intervalMonths === 12) return 'Suscripción anual';
-  if (intervalMonths === 6) return 'Suscripción semestral';
-  if (intervalMonths === 3) return 'Suscripción trimestral';
-  if (intervalMonths === 1) return 'Suscripción mensual';
-  return `Suscripción cada ${intervalMonths} meses`;
-}
-
-/** Fecha del próximo pago: hoy + trial + periodo. */
-export function nextPaymentDate(intervalMonths: number, trialDays: number): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + trialDays);
-  d.setMonth(d.getMonth() + intervalMonths);
-  return d;
+/**
+ * Céntimos → importe en el LOCALE ACTIVO ("999 €" / "$999"). Delega en la
+ * conversión canónica de `@/lib/i18n/format`: la regla de decimales («sin
+ * decimales si la cantidad es redonda») vive allí y solo allí, y coincide con
+ * la que este wrapper aplicaba a mano — el español sale byte a byte igual.
+ *
+ * `opts` es OPCIONAL y solo reenvía overrides a la canónica. Lo necesitan las
+ * pantallas de `(public)`/`(venta)`, que sí se pintan en SSR: allí el singleton
+ * de `user-prefs` está vacío a propósito y hay que pasar `{ locale }` explícito
+ * para que servidor y cliente pinten el mismo importe.
+ */
+export function formatCents(
+  cents: number,
+  currency = 'eur',
+  opts?: Intl.NumberFormatOptions & FmtOverrides,
+): string {
+  return formatCentsI18n(cents, currency.toUpperCase(), opts);
 }

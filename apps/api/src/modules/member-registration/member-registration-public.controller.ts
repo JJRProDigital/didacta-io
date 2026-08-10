@@ -36,7 +36,6 @@ import {
 } from '@didacta/mod-member-registration';
 import { extractClientContext } from '../../auth/client-context';
 import { ZodValidationPipe } from '../../auth/zod-validation.pipe';
-import { resolveWebBaseUrl } from '../../common/resolve-web-base-url';
 import { runAsTenant, runSanctionedGlobalAccess } from '../../tenancy/tenant-context.storage';
 import { TenantResolverService } from '../../tenancy/tenant-resolver.service';
 import { EmailVerificationService } from './email-verification.service';
@@ -79,9 +78,10 @@ export class MemberRegistrationPublicController {
   private requireAuthSecret(): string {
     const secret = process.env['AUTH_SECRET']?.trim();
     if (!secret) {
-      throw new ServiceUnavailableException(
-        'El flujo de inscripción no está configurado (falta AUTH_SECRET).',
-      );
+      throw new ServiceUnavailableException({
+        message: 'El flujo de inscripción no está configurado (falta AUTH_SECRET).',
+        code: 'MEMBER_REG_NOT_CONFIGURED',
+      });
     }
     return secret;
   }
@@ -94,7 +94,10 @@ export class MemberRegistrationPublicController {
   private async requirePolicy(tenantId: string): Promise<EffectiveRegistrationPolicy> {
     const policy = await this.settings.resolveEffectivePolicy(tenantId);
     if (!policy.enabled || !policy.operational) {
-      throw new ServiceUnavailableException('La inscripción no está disponible en esta comunidad.');
+      throw new ServiceUnavailableException({
+        message: 'La inscripción no está disponible en esta comunidad.',
+        code: 'MEMBER_REG_UNAVAILABLE',
+      });
     }
     return policy;
   }
@@ -133,18 +136,25 @@ export class MemberRegistrationPublicController {
     return runAsTenant(tenantId, async () => {
       const policy = await this.requirePolicy(tenantId);
       if (!policy.verifiers.includes('telegram')) {
-        throw new ServiceUnavailableException(
-          'Esta comunidad no verifica por Telegram su inscripción.',
-        );
+        throw new ServiceUnavailableException({
+          message: 'Esta comunidad no verifica por Telegram su inscripción.',
+          code: 'MEMBER_REG_TELEGRAM_NOT_ENABLED',
+        });
       }
       // Operativo garantizado por requirePolicy → la config del bot existe.
       const telegramConfig = await this.settings.resolveTelegram(tenantId);
       if (!telegramConfig) {
-        throw new ServiceUnavailableException('El acceso por Telegram no está configurado.');
+        throw new ServiceUnavailableException({
+          message: 'El acceso por Telegram no está configurado.',
+          code: 'MEMBER_REG_TELEGRAM_NOT_CONFIGURED',
+        });
       }
 
       if (!this.telegram.verifyLoginHash(telegramConfig, dto)) {
-        throw new UnauthorizedException('Firma de Telegram inválida.');
+        throw new UnauthorizedException({
+          message: 'Firma de Telegram inválida.',
+          code: 'MEMBER_REG_TELEGRAM_SIGNATURE_INVALID',
+        });
       }
 
       const inGroup = await this.telegram.getChatMember(telegramConfig, dto.id);
@@ -168,9 +178,10 @@ export class MemberRegistrationPublicController {
     return runAsTenant(tenantId, async () => {
       const policy = await this.requirePolicy(tenantId);
       if (!policy.verifiers.includes('otp')) {
-        throw new ServiceUnavailableException(
-          'Esta comunidad no verifica por email su inscripción.',
-        );
+        throw new ServiceUnavailableException({
+          message: 'Esta comunidad no verifica por email su inscripción.',
+          code: 'MEMBER_REG_OTP_NOT_ENABLED',
+        });
       }
       this.requireTelegramClaims(policy, secret, dto.ticket);
 
@@ -198,9 +209,10 @@ export class MemberRegistrationPublicController {
     return runAsTenant(tenantId, async () => {
       const policy = await this.requirePolicy(tenantId);
       if (!policy.verifiers.includes('otp')) {
-        throw new ServiceUnavailableException(
-          'Esta comunidad no verifica por email su inscripción.',
-        );
+        throw new ServiceUnavailableException({
+          message: 'Esta comunidad no verifica por email su inscripción.',
+          code: 'MEMBER_REG_OTP_NOT_ENABLED',
+        });
       }
       const telegramClaims = this.requireTelegramClaims(policy, secret, dto.ticket);
 
@@ -211,7 +223,10 @@ export class MemberRegistrationPublicController {
         extractClientContext(req),
       );
       if (!ok) {
-        throw new UnauthorizedException('Código inválido o expirado.');
+        throw new UnauthorizedException({
+          message: 'Código inválido o expirado.',
+          code: 'MEMBER_REG_OTP_INVALID',
+        });
       }
 
       const verificationToken = signTicket(
@@ -252,14 +267,23 @@ export class MemberRegistrationPublicController {
         // El verificationToken del OTP es la evidencia final (arrastra la de
         // Telegram si ese verificador también estaba exigido).
         if (!dto.verificationToken) {
-          throw new UnauthorizedException('Token de verificación inválido o expirado.');
+          throw new UnauthorizedException({
+            message: 'Token de verificación inválido o expirado.',
+            code: 'MEMBER_REG_VERIFICATION_TOKEN_INVALID',
+          });
         }
         const claims = verifyTicket<VerificationTokenClaims>(dto.verificationToken, secret);
         if (!claims || claims.purpose !== 'member-register') {
-          throw new UnauthorizedException('Token de verificación inválido o expirado.');
+          throw new UnauthorizedException({
+            message: 'Token de verificación inválido o expirado.',
+            code: 'MEMBER_REG_VERIFICATION_TOKEN_INVALID',
+          });
         }
         if (policy.verifiers.includes('telegram') && !claims.telegramId) {
-          throw new UnauthorizedException('Falta la verificación de Telegram.');
+          throw new UnauthorizedException({
+            message: 'Falta la verificación de Telegram.',
+            code: 'MEMBER_REG_TELEGRAM_VERIFICATION_MISSING',
+          });
         }
         email = claims.email;
         telegramId = claims.telegramId ?? null;
@@ -269,7 +293,10 @@ export class MemberRegistrationPublicController {
         // del formulario (sin verificar — la aprobación manual sigue delante).
         const claims = dto.ticket ? verifyTicket<TelegramTicketClaims>(dto.ticket, secret) : null;
         if (!claims || claims.purpose !== 'telegram') {
-          throw new UnauthorizedException('Ticket de Telegram inválido o expirado.');
+          throw new UnauthorizedException({
+            message: 'Ticket de Telegram inválido o expirado.',
+            code: 'MEMBER_REG_TELEGRAM_TICKET_INVALID',
+          });
         }
         email = this.requireEmail(dto);
         telegramId = claims.telegramId;
@@ -281,7 +308,7 @@ export class MemberRegistrationPublicController {
 
       // Base del API para los enlaces de decisión (aprobar/rechazar) del email,
       // que apuntan de vuelta a este controller (`GET .../decision`).
-      const apiBase = this.resolveApiBaseUrl(req);
+      const apiBase = await this.resolveApiBaseUrl(tenantId, req);
       await this.registration.createPending(
         tenantId,
         {
@@ -313,12 +340,13 @@ export class MemberRegistrationPublicController {
     // El token de decisión es OPACO (aleatorio, solo su hash vive en BD — no es
     // un ticket HMAC con claims): el tenant se conoce recién tras el lookup
     // interno del service, así que la llamada va sancionada completa.
-    // Inventario F3: `decide()` deberá adoptar el patrón de password-reset
-    // (lookup sancionado del token + resto bajo runAsTenant del tenant de la fila).
     const result = await runSanctionedGlobalAccess(() =>
       this.decision.decide(token, extractClientContext(req)),
     );
-    const web = (process.env['WEB_PUBLIC_URL']?.trim() || resolveWebBaseUrl(req)).replace(
+    // `decide()` devuelve el tenantId de la fila (null solo si el token no
+    // existe) — con eso, la base prefiere el dominio primario del tenant
+    // sobre el Host de este request.
+    const web = (await this.tenantResolver.resolveTenantWebBaseUrl(result.tenantId, req)).replace(
       /\/$/,
       '',
     );
@@ -340,7 +368,10 @@ export class MemberRegistrationPublicController {
     if (!policy.verifiers.includes('telegram')) return null;
     const claims = ticket ? verifyTicket<TelegramTicketClaims>(ticket, secret) : null;
     if (!claims || claims.purpose !== 'telegram') {
-      throw new UnauthorizedException('Ticket de Telegram inválido o expirado.');
+      throw new UnauthorizedException({
+        message: 'Ticket de Telegram inválido o expirado.',
+        code: 'MEMBER_REG_TELEGRAM_TICKET_INVALID',
+      });
     }
     return claims;
   }
@@ -349,7 +380,10 @@ export class MemberRegistrationPublicController {
   private requireEmail(dto: RegisterDto): string {
     const email = dto.email?.trim().toLowerCase();
     if (!email) {
-      throw new BadRequestException('Falta el email de la solicitud.');
+      throw new BadRequestException({
+        message: 'Falta el email de la solicitud.',
+        code: 'MEMBER_REG_EMAIL_MISSING',
+      });
     }
     return email;
   }
@@ -364,18 +398,22 @@ export class MemberRegistrationPublicController {
     const hostStr = Array.isArray(host) ? host[0] : host;
     const tenant = await this.tenantResolver.resolveByHost(hostStr);
     if (!tenant) {
-      throw new NotFoundException('Comunidad no encontrada para este dominio.');
+      throw new NotFoundException({
+        message: 'Comunidad no encontrada para este dominio.',
+        code: 'MEMBER_REG_TENANT_NOT_FOUND',
+      });
     }
     return tenant.id;
   }
 
   /**
    * Base pública del API para construir los enlaces de decisión del email.
-   * Reusa la misma cascada que `resolveWebBaseUrl` (env → X-Forwarded-* →
-   * host del request): en el setup de Didacta (Traefik, un host por tenant) la
-   * API y el web comparten dominio bajo el prefijo `/api/v1`.
+   * Reusa la misma cascada que `resolveTenantWebBaseUrl` (env → dominio
+   * primario del tenant → X-Forwarded-* → host del request): en el setup de
+   * Didacta (Traefik, un host por tenant) la API y el web comparten dominio
+   * bajo el prefijo `/api/v1`.
    */
-  private resolveApiBaseUrl(req: FastifyRequest): string {
-    return resolveWebBaseUrl(req);
+  private async resolveApiBaseUrl(tenantId: string, req: FastifyRequest): Promise<string> {
+    return this.tenantResolver.resolveTenantWebBaseUrl(tenantId, req);
   }
 }

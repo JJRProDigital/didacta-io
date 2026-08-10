@@ -13,7 +13,9 @@
  * Todos los selectores usan datos reales (grupos y cursos del tenant).
  */
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,13 +24,13 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { ApiHttpError } from '@/lib/api-client';
 import { accessGroupsApi, type AccessGroupListItem } from '@/lib/access-groups';
+import { adminStripeApi } from '@/lib/admin-stripe';
 import { authStorage } from '@/lib/auth-storage';
 import { coursesApi, type Course } from '@/lib/courses';
+import { apiErrorMessage } from '@/lib/i18n/api-error';
+import { formatCents } from '@/lib/i18n/format';
 import {
-  formatCents,
-  intervalDescription,
   membershipAdminApi,
   type MembershipAdminPlan,
   type MembershipConfig,
@@ -58,14 +60,6 @@ const CURRENCY_OPTIONS = ['eur', 'usd', 'gbp', 'mxn', 'cop', 'ars', 'pen', 'brl'
 /** Periodicidades habituales del selector; la API admite cualquier 1..12. */
 const INTERVAL_PRESETS = [1, 3, 6, 12];
 
-function intervalOptionLabel(n: number): string {
-  if (n === 1) return 'Mensual';
-  if (n === 3) return 'Trimestral';
-  if (n === 6) return 'Semestral';
-  if (n === 12) return 'Anual';
-  return `Cada ${n} meses`;
-}
-
 interface PlanDraft {
   name: string;
   intervalMonths: number;
@@ -87,6 +81,10 @@ const EMPTY_DRAFT: PlanDraft = {
 };
 
 export default function MembresiaAdminPage() {
+  const t = useTranslations('adminMonetizacion.membership');
+  const tInterval = useTranslations('adminMonetizacion.interval');
+  const tSub = useTranslations('adminMonetizacion.subscription');
+  const tErrors = useTranslations('errors');
   const [plans, setPlans] = useState<MembershipAdminPlan[] | null>(null);
   const [config, setConfig] = useState<MembershipConfig | null>(null);
   const [groups, setGroups] = useState<AccessGroupListItem[]>([]);
@@ -94,6 +92,10 @@ export default function MembresiaAdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // null mientras carga; false si ni el tenant ni el fallback global tienen
+  // Stripe configurado — la config de planes/página se guarda igual, pero el
+  // checkout real de /unete fallará hasta que se configure.
+  const [stripeReady, setStripeReady] = useState<boolean | null>(null);
 
   // Alta/edición de plan
   const [draft, setDraft] = useState<PlanDraft>(EMPTY_DRAFT);
@@ -117,14 +119,14 @@ export default function MembresiaAdminPage() {
   }
 
   useEffect(() => {
-    const t = token();
-    if (!t) return;
+    const bearer = token();
+    if (!bearer) return;
     void (async () => {
       try {
         const [planList, cfg, groupRes, courseList] = await Promise.all([
-          membershipAdminApi.listPlans(t),
-          membershipAdminApi.getConfig(t),
-          accessGroupsApi.list(t),
+          membershipAdminApi.listPlans(bearer),
+          membershipAdminApi.getConfig(bearer),
+          accessGroupsApi.list(bearer),
           coursesApi.list({ status: 'PUBLISHED' }),
         ]);
         setPlans(planList);
@@ -132,11 +134,16 @@ export default function MembresiaAdminPage() {
         setCourses(courseList);
         applyConfig(cfg);
       } catch (e) {
-        setError(
-          e instanceof ApiHttpError
-            ? e.message
-            : 'No pudimos cargar la configuración de membresía.',
-        );
+        setError(apiErrorMessage(e, tErrors));
+      }
+      // Aviso proactivo, no bloqueante: guardar planes/página no depende de
+      // Stripe, pero el checkout real de /unete sí — mejor avisar aquí que
+      // dejar que el admin lo descubra cuando un alumno intente pagar.
+      try {
+        const stripe = await adminStripeApi.get();
+        setStripeReady(stripe.hasTenantConfig || stripe.hasGlobalFallback);
+      } catch {
+        setStripeReady(null);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -167,12 +174,29 @@ export default function MembresiaAdminPage() {
   // muestran junto a los planes, así que heredan la del primer plan del tenant.
   const refCurrency = (plans?.[0]?.currency ?? 'eur').toUpperCase();
 
+  const intervalOptionLabel = (n: number): string => {
+    if (n === 1) return tInterval('monthly');
+    if (n === 3) return tInterval('quarterly');
+    if (n === 6) return tInterval('semiannual');
+    if (n === 12) return tInterval('annual');
+    return tInterval('everyMonths', { months: n });
+  };
+
+  /** Nombre largo de la periodicidad del plan (antes `intervalDescription`). */
+  const subscriptionLabel = (n: number): string => {
+    if (n === 12) return tSub('annual');
+    if (n === 6) return tSub('semiannual');
+    if (n === 3) return tSub('quarterly');
+    if (n === 1) return tSub('monthly');
+    return tSub('everyMonths', { months: n });
+  };
+
   async function savePlan() {
-    const t = token();
-    if (!t) return;
+    const bearer = token();
+    if (!bearer) return;
     const amountCents = amountToCents(draft.amountRaw);
     if (!draft.name.trim() || amountCents === null) {
-      setError('El plan necesita nombre y precio válido.');
+      setError(t('planNeedsNamePrice'));
       return;
     }
     const compareAtCents = draft.compareAtRaw.trim() ? amountToCents(draft.compareAtRaw) : null;
@@ -189,43 +213,43 @@ export default function MembresiaAdminPage() {
         trialDays,
         isFeatured: draft.isFeatured,
       };
-      if (editingId) await membershipAdminApi.updatePlan(t, editingId, input);
-      else await membershipAdminApi.createPlan(t, input);
-      setPlans(await membershipAdminApi.listPlans(t));
+      if (editingId) await membershipAdminApi.updatePlan(bearer, editingId, input);
+      else await membershipAdminApi.createPlan(bearer, input);
+      setPlans(await membershipAdminApi.listPlans(bearer));
       setDraft(EMPTY_DRAFT);
       setEditingId(null);
-      setNotice(editingId ? 'Plan actualizado.' : 'Plan creado.');
+      setNotice(editingId ? t('planUpdated') : t('planCreated'));
     } catch (e) {
-      setError(e instanceof ApiHttpError ? e.message : 'No se pudo guardar el plan.');
+      setError(apiErrorMessage(e, tErrors));
     } finally {
       setBusy(false);
     }
   }
 
   async function togglePlanActive(plan: MembershipAdminPlan) {
-    const t = token();
-    if (!t) return;
+    const bearer = token();
+    if (!bearer) return;
     setBusy(true);
     try {
-      await membershipAdminApi.updatePlan(t, plan.id, { active: !plan.active });
-      setPlans(await membershipAdminApi.listPlans(t));
+      await membershipAdminApi.updatePlan(bearer, plan.id, { active: !plan.active });
+      setPlans(await membershipAdminApi.listPlans(bearer));
     } catch (e) {
-      setError(e instanceof ApiHttpError ? e.message : 'No se pudo actualizar el plan.');
+      setError(apiErrorMessage(e, tErrors));
     } finally {
       setBusy(false);
     }
   }
 
   async function removePlan(plan: MembershipAdminPlan) {
-    const t = token();
-    if (!t) return;
+    const bearer = token();
+    if (!bearer) return;
     setBusy(true);
     try {
-      await membershipAdminApi.deletePlan(t, plan.id);
-      setPlans(await membershipAdminApi.listPlans(t));
-      setNotice('Plan eliminado (o desactivado si ya tenía ventas).');
+      await membershipAdminApi.deletePlan(bearer, plan.id);
+      setPlans(await membershipAdminApi.listPlans(bearer));
+      setNotice(t('planDeleted'));
     } catch (e) {
-      setError(e instanceof ApiHttpError ? e.message : 'No se pudo eliminar el plan.');
+      setError(apiErrorMessage(e, tErrors));
     } finally {
       setBusy(false);
     }
@@ -245,14 +269,14 @@ export default function MembresiaAdminPage() {
   }
 
   async function saveConfig() {
-    const t = token();
-    if (!t) return;
+    const bearer = token();
+    if (!bearer) return;
     // Límite del trial: exigir un número explícito — un campo vacío NO debe
     // guardarse en silencio como 0 (= sin límite, justo lo contrario de lo que
     // el admin probablemente quería).
     const parsedTrialLimit = Number.parseInt(trialLessonLimit, 10);
     if (!Number.isFinite(parsedTrialLimit) || parsedTrialLimit < 0 || parsedTrialLimit > 1000) {
-      setError('Indica cuántas clases se ven durante la prueba (0 a 1000; 0 = sin límite).');
+      setError(t('trialLimitInvalid'));
       return;
     }
     setBusy(true);
@@ -261,8 +285,13 @@ export default function MembresiaAdminPage() {
       const coursePrices = Object.entries(priceByCourse)
         .map(([courseId, amount]) => ({ courseId, amountCents: amountToCents(amount) }))
         .filter((x): x is { courseId: string; amountCents: number } => x.amountCents !== null);
-      const updated = await membershipAdminApi.updateConfig(t, {
+      const updated = await membershipAdminApi.updateConfig(bearer, {
         active,
+        // Literal, NO traducido: este valor se PERSISTE y lo leen los visitantes
+        // de la página pública, no el admin. Traducirlo guardaría el titular en
+        // el idioma de la UI de quien guardó (un admin en inglés dejaría
+        // «Become a member» a un público español). Coincide con el default de la
+        // columna en el schema (`MembershipConfig.headline`).
         headline: headline.trim() || 'Hazte miembro',
         subheadline: subheadline.trim() || null,
         accessGroupId: accessGroupId || null,
@@ -274,9 +303,9 @@ export default function MembresiaAdminPage() {
         testimonialRole: tRole.trim() || null,
       });
       applyConfig(updated);
-      setNotice('Configuración guardada.');
+      setNotice(t('configSaved'));
     } catch (e) {
-      setError(e instanceof ApiHttpError ? e.message : 'No se pudo guardar la configuración.');
+      setError(apiErrorMessage(e, tErrors));
     } finally {
       setBusy(false);
     }
@@ -286,9 +315,9 @@ export default function MembresiaAdminPage() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Membresía</h1>
+          <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-sm text-text-muted">
-            Página pública de compra por suscripción:{' '}
+            {t('publicIntro')}{' '}
             <a
               href={publicUrl}
               target="_blank"
@@ -300,9 +329,21 @@ export default function MembresiaAdminPage() {
           </p>
         </div>
         <Badge variant={config?.active ? 'success' : 'muted'}>
-          {config?.active ? 'Página activa' : 'Página desactivada'}
+          {config?.active ? t('badgeActive') : t('badgeInactive')}
         </Badge>
       </div>
+
+      {stripeReady === false ? (
+        <p className="rounded-lg border border-warning-200 bg-warning-50 px-3 py-2 text-sm text-warning-700">
+          {t.rich('stripeWarning', {
+            link: (chunks) => (
+              <Link href="/admin/configuracion" className="font-semibold underline">
+                {chunks}
+              </Link>
+            ),
+          })}
+        </p>
+      ) : null}
 
       {error && (
         <p className="rounded-lg border border-danger-500/40 bg-danger-50 px-3 py-2 text-sm text-danger-700">
@@ -318,17 +359,14 @@ export default function MembresiaAdminPage() {
       {/* ── Planes ── */}
       <Card>
         <CardHeader>
-          <CardTitle>Planes</CardTitle>
-          <CardDescription>
-            Precio, periodicidad, precio tachado y días de prueba. El price de Stripe se crea solo
-            en el primer pago (y se rota al cambiar el precio).
-          </CardDescription>
+          <CardTitle>{t('plansTitle')}</CardTitle>
+          <CardDescription>{t('plansDescription')}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {plans === null ? (
-            <p className="text-sm text-text-muted">Cargando…</p>
+            <p className="text-sm text-text-muted">{t('loading')}</p>
           ) : plans.length === 0 ? (
-            <p className="text-sm text-text-muted">Aún no hay planes. Crea el primero abajo.</p>
+            <p className="text-sm text-text-muted">{t('plansEmpty')}</p>
           ) : (
             <ul className="flex flex-col gap-2">
               {plans.map((plan) => (
@@ -339,23 +377,25 @@ export default function MembresiaAdminPage() {
                   <div className="min-w-0">
                     <p className="font-semibold">
                       {plan.name}{' '}
-                      {plan.isFeatured ? <Badge variant="success">Destacado</Badge> : null}{' '}
-                      {!plan.active ? <Badge variant="muted">Inactivo</Badge> : null}
+                      {plan.isFeatured ? <Badge variant="success">{t('featured')}</Badge> : null}{' '}
+                      {!plan.active ? <Badge variant="muted">{t('inactive')}</Badge> : null}
                     </p>
                     <p className="text-sm text-text-muted">
-                      {intervalDescription(plan.intervalMonths)} ·{' '}
+                      {subscriptionLabel(plan.intervalMonths)} ·{' '}
                       {plan.compareAtCents ? (
                         <span className="line-through">
-                          {formatCents(plan.compareAtCents, plan.currency)}
+                          {formatCents(plan.compareAtCents, plan.currency.toUpperCase())}
                         </span>
                       ) : null}{' '}
-                      <strong>{formatCents(plan.amountCents, plan.currency)}</strong>
-                      {plan.trialDays > 0 ? ` · ${plan.trialDays} días de prueba` : ''}
+                      <strong>{formatCents(plan.amountCents, plan.currency.toUpperCase())}</strong>
+                      {plan.trialDays > 0
+                        ? ` · ${t('trialDaysSuffix', { days: plan.trialDays })}`
+                        : ''}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <Button variant="ghost" size="sm" onClick={() => startEdit(plan)}>
-                      Editar
+                      {t('edit')}
                     </Button>
                     <Button
                       variant="ghost"
@@ -363,7 +403,7 @@ export default function MembresiaAdminPage() {
                       disabled={busy}
                       onClick={() => void togglePlanActive(plan)}
                     >
-                      {plan.active ? 'Desactivar' : 'Activar'}
+                      {plan.active ? t('deactivate') : t('activate')}
                     </Button>
                     <Button
                       variant="ghost"
@@ -371,7 +411,7 @@ export default function MembresiaAdminPage() {
                       disabled={busy}
                       onClick={() => void removePlan(plan)}
                     >
-                      Eliminar
+                      {t('delete')}
                     </Button>
                   </div>
                 </li>
@@ -382,16 +422,16 @@ export default function MembresiaAdminPage() {
           {/* Alta / edición */}
           <div className="grid gap-3 rounded-xl border border-border bg-surface-2 p-4 md:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="plan-name">Nombre</Label>
+              <Label htmlFor="plan-name">{t('nameLabel')}</Label>
               <Input
                 id="plan-name"
-                placeholder="Anual"
+                placeholder={t('namePlaceholder')}
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="plan-interval">Periodicidad</Label>
+              <Label htmlFor="plan-interval">{t('intervalLabel')}</Label>
               <Select
                 id="plan-interval"
                 value={String(draft.intervalMonths)}
@@ -408,7 +448,7 @@ export default function MembresiaAdminPage() {
               </Select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="plan-currency">Moneda</Label>
+              <Label htmlFor="plan-currency">{t('currencyLabel')}</Label>
               <Select
                 id="plan-currency"
                 value={draft.currency}
@@ -425,7 +465,9 @@ export default function MembresiaAdminPage() {
               </Select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="plan-amount">Precio ({draft.currency.toUpperCase()})</Label>
+              <Label htmlFor="plan-amount">
+                {t('priceLabel', { currency: draft.currency.toUpperCase() })}
+              </Label>
               <Input
                 id="plan-amount"
                 inputMode="decimal"
@@ -435,7 +477,7 @@ export default function MembresiaAdminPage() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="plan-compare">Precio tachado (opcional)</Label>
+              <Label htmlFor="plan-compare">{t('compareAtLabel')}</Label>
               <Input
                 id="plan-compare"
                 inputMode="decimal"
@@ -445,7 +487,7 @@ export default function MembresiaAdminPage() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="plan-trial">Días de prueba</Label>
+              <Label htmlFor="plan-trial">{t('trialDaysLabel')}</Label>
               <Input
                 id="plan-trial"
                 inputMode="numeric"
@@ -459,11 +501,11 @@ export default function MembresiaAdminPage() {
                 checked={draft.isFeatured}
                 onCheckedChange={(v) => setDraft({ ...draft, isFeatured: v })}
               />
-              <Label htmlFor="plan-featured">Preseleccionado en la página</Label>
+              <Label htmlFor="plan-featured">{t('featuredLabel')}</Label>
             </div>
             <div className="flex items-center gap-2 md:col-span-2">
               <Button disabled={busy} onClick={() => void savePlan()}>
-                {editingId ? 'Guardar cambios' : 'Crear plan'}
+                {editingId ? t('saveChanges') : t('createPlan')}
               </Button>
               {editingId ? (
                 <Button
@@ -473,7 +515,7 @@ export default function MembresiaAdminPage() {
                     setDraft(EMPTY_DRAFT);
                   }}
                 >
-                  Cancelar edición
+                  {t('cancelEdit')}
                 </Button>
               ) : null}
             </div>
@@ -484,35 +526,33 @@ export default function MembresiaAdminPage() {
       {/* ── Página pública ── */}
       <Card>
         <CardHeader>
-          <CardTitle>Página pública</CardTitle>
-          <CardDescription>
-            Contenido de /unete y qué concede la compra. El testimonial solo se muestra si lo
-            rellenas (cita + autor).
-          </CardDescription>
+          <CardTitle>{t('configTitle')}</CardTitle>
+          <CardDescription>{t('configDescription')}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="flex items-center gap-3">
             <Switch id="page-active" checked={active} onCheckedChange={setActive} />
-            <Label htmlFor="page-active">Página de compra activa</Label>
+            <Label htmlFor="page-active">{t('pageActiveLabel')}</Label>
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cfg-headline">Título</Label>
+              <Label htmlFor="cfg-headline">{t('headlineLabel')}</Label>
               <Input
                 id="cfg-headline"
                 value={headline}
+                placeholder={t('defaultHeadline')}
                 onChange={(e) => setHeadline(e.target.value)}
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cfg-group">Grupo de acceso que concede</Label>
+              <Label htmlFor="cfg-group">{t('groupLabel')}</Label>
               <Select
                 id="cfg-group"
                 value={accessGroupId}
                 onChange={(e) => setAccessGroupId(e.target.value)}
               >
-                <option value="">— Sin grupo (no recomendado) —</option>
+                <option value="">{t('noGroupOption')}</option>
                 {groups.map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.name}
@@ -521,11 +561,11 @@ export default function MembresiaAdminPage() {
               </Select>
             </div>
             <div className="flex flex-col gap-1.5 md:col-span-2">
-              <Label htmlFor="cfg-sub">Subtítulo</Label>
+              <Label htmlFor="cfg-sub">{t('subheadlineLabel')}</Label>
               <Textarea
                 id="cfg-sub"
                 rows={2}
-                placeholder="Desbloquea todos los cursos, actualizaciones y la comunidad."
+                placeholder={t('subheadlinePlaceholder')}
                 value={subheadline}
                 onChange={(e) => setSubheadline(e.target.value)}
               />
@@ -534,13 +574,11 @@ export default function MembresiaAdminPage() {
 
           <div className="flex items-center gap-3">
             <Switch id="cfg-courses" checked={showCourses} onCheckedChange={setShowCourses} />
-            <Label htmlFor="cfg-courses">Mostrar el catálogo de cursos en la página</Label>
+            <Label htmlFor="cfg-courses">{t('showCoursesLabel')}</Label>
           </div>
 
           <div className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface-2 p-4">
-            <Label htmlFor="cfg-trial-limit">
-              Clases visibles por curso durante el periodo de prueba
-            </Label>
+            <Label htmlFor="cfg-trial-limit">{t('trialLimitLabel')}</Label>
             <div className="flex items-center gap-3">
               <Input
                 id="cfg-trial-limit"
@@ -551,22 +589,15 @@ export default function MembresiaAdminPage() {
                 value={trialLessonLimit}
                 onChange={(e) => setTrialLessonLimit(e.target.value)}
               />
-              <p className="text-sm text-text-muted">
-                Mientras la suscripción está en prueba, cada curso muestra solo sus primeras N
-                clases; el resto aparece bloqueado con la opción de pagar ya. 0 = sin límite (acceso
-                completo también durante la prueba).
-              </p>
+              <p className="text-sm text-text-muted">{t('trialLimitHelp')}</p>
             </div>
           </div>
 
           {showCourses && (
             <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-2 p-4">
-              <p className="text-sm font-semibold">
-                Precio individual de referencia por curso (lo que cuestan por separado, p. ej. en tu
-                web de venta)
-              </p>
+              <p className="text-sm font-semibold">{t('coursePricesTitle')}</p>
               {courses.length === 0 ? (
-                <p className="text-sm text-text-muted">No hay cursos publicados.</p>
+                <p className="text-sm text-text-muted">{t('noCoursesPublished')}</p>
               ) : (
                 <ul className="flex flex-col gap-2">
                   {courses.map((c) => (
@@ -593,7 +624,7 @@ export default function MembresiaAdminPage() {
 
           <div className="grid gap-3 rounded-xl border border-border bg-surface-2 p-4 md:grid-cols-2">
             <div className="flex flex-col gap-1.5 md:col-span-2">
-              <Label htmlFor="cfg-tquote">Testimonial — cita (opcional)</Label>
+              <Label htmlFor="cfg-tquote">{t('testimonialQuoteLabel')}</Label>
               <Textarea
                 id="cfg-tquote"
                 rows={3}
@@ -602,7 +633,7 @@ export default function MembresiaAdminPage() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cfg-tauthor">Autor</Label>
+              <Label htmlFor="cfg-tauthor">{t('testimonialAuthorLabel')}</Label>
               <Input
                 id="cfg-tauthor"
                 value={tAuthor}
@@ -610,14 +641,14 @@ export default function MembresiaAdminPage() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="cfg-trole">Cargo</Label>
+              <Label htmlFor="cfg-trole">{t('testimonialRoleLabel')}</Label>
               <Input id="cfg-trole" value={tRole} onChange={(e) => setTRole(e.target.value)} />
             </div>
           </div>
 
           <div>
             <Button disabled={busy} onClick={() => void saveConfig()}>
-              Guardar configuración
+              {t('saveConfig')}
             </Button>
           </div>
         </CardContent>

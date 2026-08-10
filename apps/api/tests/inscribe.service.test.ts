@@ -97,7 +97,7 @@ function makeHarness(opts: {
             tenantName: 'Academia Demo',
           },
     ),
-  } as never;
+  };
   const logger = { warn: vi.fn(), log: vi.fn(), error: vi.fn(), debug: vi.fn() } as never;
 
   const accessGroupsSvc = {
@@ -122,7 +122,7 @@ function makeHarness(opts: {
     registry,
     smtpResolver,
     smtp as never,
-    passwordReset,
+    passwordReset as never,
     accessGroupsSvc as never,
     logger,
   );
@@ -153,7 +153,7 @@ describe('InscribeService.inscribe', () => {
 
     expect(result.userCreated).toBe(true);
     expect(result.userId).toBe('new-user');
-    const createArg = h.txUser.create.mock.calls[0][0].data;
+    const createArg = h.txUser.create.mock.calls[0]![0].data;
     expect(createArg.status).toBe('ACTIVE');
     // Ya NO se fuerza el cambio: el comprador elige su contraseña en el enlace,
     // así entra una sola vez y va directo al onboarding.
@@ -184,12 +184,58 @@ describe('InscribeService.inscribe', () => {
       expect.anything(),
       { ttlMinutes: SET_PASSWORD_TTL },
     );
-    const message = h.smtp.send.mock.calls[0][1] as { html: string; text: string };
+    const message = h.smtp.send.mock.calls[0]![1] as { html: string; text: string };
     expect(message.html).toContain(`${WEB_BASE_URL}/reset-password?token=tok-abc`);
     expect(message.html).toContain('Define tu contraseña');
     // No se filtra ninguna contraseña generada.
     expect(message.text).not.toContain('argon2-hash');
     expect(message.text).not.toMatch(/Contraseña temporal/i);
+  });
+
+  // ── Idioma del comprador ───────────────────────────────────────────────────
+  // El bug: el cuerpo del correo se traducía pero el botón «Define tu
+  // contraseña» seguía en español porque es una parte estructural del email.
+
+  it('locale=en-US: asunto, cuerpo y BOTÓN del email de alta en inglés', async () => {
+    const h = makeHarness({ existingUser: null, resetToken: 'tok-abc' });
+
+    await h.service.inscribe(
+      TENANT_ID,
+      ACTOR_ID,
+      { email: 'john@x.com', name: 'John', courseIds: [COURSE_A], locale: 'en-US' },
+      WEB_BASE_URL,
+    );
+
+    const message = h.smtp.send.mock.calls[0]![1] as {
+      subject: string;
+      html: string;
+      text: string;
+    };
+    expect(message.subject).toBe('Your access to Academia Demo');
+    expect(message.text).toContain('Hi John,');
+    expect(message.text).toContain('Your account at Academia Demo has been created');
+    expect(message.text).toContain(`Set your password: ${WEB_BASE_URL}/reset-password?token=`);
+    expect(message.html).toContain('Set your password');
+    for (const spanish of ['Define tu contraseña', 'Hola John', 'Se ha creado tu cuenta']) {
+      expect(message.text, `«${spanish}» se coló en el email inglés`).not.toContain(spanish);
+      expect(message.html, `«${spanish}» se coló en el HTML inglés`).not.toContain(spanish);
+    }
+  });
+
+  it('CAMINO DEGRADADO: sin locale en el alta, o con uno sin traducir, sale español', async () => {
+    for (const locale of [undefined, 'pt-BR', 'es-AR']) {
+      const h = makeHarness({ existingUser: null, resetToken: 'tok-abc' });
+      await h.service.inscribe(
+        TENANT_ID,
+        ACTOR_ID,
+        { email: 'ana@x.com', name: 'Ana', courseIds: [COURSE_A], ...(locale ? { locale } : {}) },
+        WEB_BASE_URL,
+      );
+      const message = h.smtp.send.mock.calls[0]![1] as { subject: string; text: string };
+      expect(message.subject, String(locale)).toBe('Tu acceso a Academia Demo');
+      expect(message.text, String(locale)).toContain('Hola Ana,');
+      expect(message.text, String(locale)).toContain('Define tu contraseña:');
+    }
   });
 
   it('si no se puede emitir el token, no manda email pero la matrícula queda hecha', async () => {

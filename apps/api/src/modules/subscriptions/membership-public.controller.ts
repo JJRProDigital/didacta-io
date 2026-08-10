@@ -7,8 +7,8 @@ import { Body, Controller, Get, NotFoundException, Post, Req } from '@nestjs/com
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import { extractClientContext } from '../../auth/client-context';
+import { readRequestLocale } from '../../common/checkout-locale';
 import { ZodValidationPipe } from '../../auth/zod-validation.pipe';
-import { resolveWebBaseUrl } from '../../common/resolve-web-base-url';
 import { runAsTenant } from '../../tenancy/tenant-context.storage';
 import { TenantResolverService } from '../../tenancy/tenant-resolver.service';
 import { ModuleRegistryService } from '../module-registry.service';
@@ -53,7 +53,7 @@ export class MembershipPublicController {
     @Body(new ZodValidationPipe(membershipCheckoutSchema)) dto: MembershipCheckoutDto,
   ) {
     const tenantId = await this.resolveTenantId(req);
-    const base = resolveWebBaseUrl(req);
+    const base = await this.tenantResolver.resolveTenantWebBaseUrl(tenantId, req);
     return runAsTenant(tenantId, async () => {
       const { url, sessionId } = await this.registry
         .getMembershipService()
@@ -62,6 +62,10 @@ export class MembershipPublicController {
           planId: dto.planId,
           email: dto.email,
           referralCode: dto.referralCode,
+          // Idioma con el que el comprador está navegando AHORA. Viaja en la
+          // metadata de Stripe porque su fila de `user` no existe todavía: se
+          // crea en el webhook, después del salto a la pasarela.
+          locale: readRequestLocale(req.headers),
           successUrl: `${base}/unete?status=success`,
           cancelUrl: `${base}/unete?status=cancel`,
         });
@@ -77,7 +81,10 @@ export class MembershipPublicController {
     const hostStr = Array.isArray(host) ? host[0] : host;
     const tenant = await this.tenantResolver.resolveByHost(hostStr);
     if (!tenant) {
-      throw new NotFoundException('Comunidad no encontrada para este dominio.');
+      throw new NotFoundException({
+        message: 'Comunidad no encontrada para este dominio.',
+        code: 'SUBS_TENANT_NOT_FOUND',
+      });
     }
     return tenant.id;
   }

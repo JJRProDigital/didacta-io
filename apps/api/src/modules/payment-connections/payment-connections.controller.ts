@@ -26,7 +26,6 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { normalizeEmail } from '@didacta/mod-payment-connections';
-import { resolveWebBaseUrl } from '../../common/resolve-web-base-url';
 import { renewalEmailHtml } from '../../common/renewal-email-html';
 import { resolveEmailBranding, type BrandingPrisma } from '../../common/branded-email';
 import { extractClientContext } from '../../auth/client-context';
@@ -41,6 +40,7 @@ import { TenantSmtpResolverService } from '../tenant-smtp-resolver.service';
 import { ModuleRegistryService } from '../module-registry.service';
 import { ModuleContextFactory } from '../module-context.factory';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TenantResolverService } from '../../tenancy/tenant-resolver.service';
 import { SubscriptionsDailyWorker } from './subscriptions-daily.worker';
 
 /**
@@ -155,6 +155,14 @@ type WebhookSecretDto = z.infer<typeof webhookSecretSchema>;
 
 const ENTITLEMENT_KINDS = ['LIFETIME', 'SUBSCRIPTION', 'TIMED', 'ONE_OFF', 'INFRA'] as const;
 
+/**
+ * Relleno del `message` cuando el MTA rechaza el envío SIN devolver texto.
+ * En ese caso NO se manda `detail`: el front detecta su ausencia y pinta el
+ * `message` crudo en vez de una frase traducida con el hueco vacío. Mismo
+ * criterio que `SMTP_NO_DETAIL` en `admin/admin-smtp.controller.ts`.
+ */
+const EMAIL_SEND_NO_DETAIL = 'error SMTP';
+
 const rulesetSchema = z.object({
   rules: z
     .array(
@@ -220,12 +228,16 @@ export class PaymentConnectionsController {
     private readonly smtpResolver: TenantSmtpResolverService,
     private readonly dailyWorker: SubscriptionsDailyWorker,
     private readonly prisma: PrismaService,
+    private readonly tenantResolver: TenantResolverService,
   ) {}
 
   private assertSuperAdmin(user: SessionClaims | undefined): SessionClaims {
     if (!user) throw new UnauthorizedException();
     if (!user.roles.includes('super_admin')) {
-      throw new ForbiddenException('Solo super_admin puede gestionar conexiones de pago.');
+      throw new ForbiddenException({
+        message: 'Solo super_admin puede gestionar conexiones de pago.',
+        code: 'PAYCONN_SUPER_ADMIN_REQUIRED',
+      });
     }
     return user;
   }
@@ -356,7 +368,7 @@ export class PaymentConnectionsController {
     // Verifica que la conexión exista y sea del tenant antes de invitar.
     await svc.getConnection(user.tenantId, id);
 
-    const webBaseUrl = resolveWebBaseUrl(req);
+    const webBaseUrl = await this.tenantResolver.resolveTenantWebBaseUrl(user.tenantId, req);
     const ctx = extractClientContext(req);
     const emails = Array.from(
       new Set(body.emails.map((e) => normalizeEmail(e)).filter((e): e is string => e !== null)),
@@ -695,7 +707,11 @@ export class PaymentConnectionsController {
       try {
         new RegExp(r.pattern, 'i');
       } catch {
-        throw new BadRequestException(`El patrón "${r.pattern}" no es una expresión válida.`);
+        throw new BadRequestException({
+          message: `El patrón "${r.pattern}" no es una expresión válida.`,
+          code: 'PAYCONN_PATTERN_INVALID',
+          detail: r.pattern,
+        });
       }
     }
     await this.registry.getPaymentConnectionsService().saveEntitlementRuleset(user.tenantId, dto);
@@ -773,16 +789,24 @@ export class PaymentConnectionsController {
   ) {
     const user = this.assertSuperAdmin(rawUser);
     const sub = await this.registry.getPaymentConnectionsService().getSubscriber(user.tenantId, id);
-    if (!sub) throw new NotFoundException('Suscriptor no encontrado.');
+    if (!sub)
+      throw new NotFoundException({
+        message: 'Suscriptor no encontrado.',
+        code: 'PAYCONN_SUBSCRIBER_NOT_FOUND',
+      });
     const to = sub.userEmail?.trim();
     if (!to) {
-      throw new BadRequestException('El suscriptor no tiene email para enviarle el recordatorio.');
+      throw new BadRequestException({
+        message: 'El suscriptor no tiene email para enviarle el recordatorio.',
+        code: 'PAYCONN_SUBSCRIBER_NO_EMAIL',
+      });
     }
     const resolved = await this.smtpResolver.resolve(user.tenantId);
     if (!resolved) {
-      throw new ConflictException(
-        'No hay SMTP configurado (ni del tenant ni global) para enviar el recordatorio.',
-      );
+      throw new ConflictException({
+        message: 'No hay SMTP configurado (ni del tenant ni global) para enviar el recordatorio.',
+        code: 'PAYCONN_SMTP_NOT_CONFIGURED',
+      });
     }
     const branding = await resolveEmailBranding(
       this.prisma as unknown as BrandingPrisma,
@@ -800,7 +824,13 @@ export class PaymentConnectionsController {
       branding.tenantName,
     );
     if (!result.ok) {
-      throw new ConflictException(`No se pudo enviar el email: ${result.error ?? 'error SMTP'}`);
+      throw new ConflictException({
+        // Ídem `MEMBER_REG_EMAIL_SEND_FAILED`: el diagnóstico del MTA viaja
+        // aparte para que no se pierda al traducir el code.
+        message: `No se pudo enviar el email: ${result.error ?? EMAIL_SEND_NO_DETAIL}`,
+        code: 'PAYCONN_EMAIL_SEND_FAILED',
+        ...(result.error ? { detail: result.error } : {}),
+      });
     }
     return { ok: true, to };
   }
@@ -893,7 +923,8 @@ export class PaymentConnectionsController {
     body: { subscriberId: string },
   ) {
     if (!rawUser) throw new UnauthorizedException();
-    const returnUrl = `${resolveWebBaseUrl(req).replace(/\/$/, '')}/cuenta?tab=suscripcion`;
+    const webBaseUrl = await this.tenantResolver.resolveTenantWebBaseUrl(rawUser.tenantId, req);
+    const returnUrl = `${webBaseUrl.replace(/\/$/, '')}/cuenta?tab=suscripcion`;
     const url = await this.registry
       .getPaymentConnectionsService()
       .createMyBillingPortalSession(rawUser.tenantId, rawUser.sub, body.subscriberId, returnUrl);

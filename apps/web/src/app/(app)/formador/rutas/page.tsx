@@ -7,6 +7,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
+import { labelOr } from '@/lib/i18n/labels';
 import {
   listPathsFormador,
   publishPath,
@@ -16,12 +18,6 @@ import {
   type LearningPathStatus,
 } from '@/lib/learning-paths';
 
-const STATUS_LABEL: Record<LearningPathStatus, string> = {
-  DRAFT: 'Borrador',
-  PUBLISHED: 'Publicada',
-  ARCHIVED: 'Archivada',
-};
-
 const STATUS_COLORS: Record<LearningPathStatus, string> = {
   DRAFT: 'bg-gray-100 text-gray-600',
   PUBLISHED: 'bg-green-100 text-green-700',
@@ -29,6 +25,7 @@ const STATUS_COLORS: Record<LearningPathStatus, string> = {
 };
 
 export default function FormadorRutasPage() {
+  const t = useTranslations('formadorAula');
   const [paths, setPaths] = useState<LearningPath[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<LearningPathStatus | 'TODAS'>('TODAS');
@@ -53,7 +50,7 @@ export default function FormadorRutasPage() {
   }
 
   async function handleArchive(path: LearningPath) {
-    if (!confirm(`¿Archivar la ruta "${path.title}"?`)) return;
+    if (!confirm(t('rutas.confirmArchive', { title: path.title }))) return;
     setActionId(path.id);
     try {
       const updated = await archivePath(path.id);
@@ -83,14 +80,14 @@ export default function FormadorRutasPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-text">Mis rutas de aprendizaje</h1>
-          <p className="mt-1 text-sm text-text-muted">Crea y gestiona rutas para tus alumnos</p>
+          <h1 className="font-display text-2xl font-bold text-text">{t('rutas.title')}</h1>
+          <p className="mt-1 text-sm text-text-muted">{t('rutas.subtitle')}</p>
         </div>
         <Link
           href="/formador/rutas/nueva"
           className="rounded-lg bg-(--didacta-trust) px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
         >
-          + Nueva ruta
+          {t('rutas.newPath')}
         </Link>
       </div>
 
@@ -105,7 +102,7 @@ export default function FormadorRutasPage() {
                 : 'border-border text-text-muted hover:text-text'
             }`}
           >
-            {s === 'TODAS' ? 'Todas' : STATUS_LABEL[s]}
+            {s === 'TODAS' ? t('rutas.filterAll') : t(`rutaStatus.${s}`)}
           </button>
         ))}
       </div>
@@ -123,12 +120,12 @@ export default function FormadorRutasPage() {
 
       {!loading && filtered.length === 0 && (
         <div className="rounded-xl border border-border bg-surface p-10 text-center">
-          <p className="text-text-muted">No hay rutas con este estado.</p>
+          <p className="text-text-muted">{t('rutas.emptyState')}</p>
           <Link
             href="/formador/rutas/nueva"
             className="mt-3 inline-block text-sm font-medium text-(--didacta-trust) hover:underline"
           >
-            Crear primera ruta
+            {t('rutas.createFirst')}
           </Link>
         </div>
       )}
@@ -138,11 +135,21 @@ export default function FormadorRutasPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-background">
-                <th className="px-4 py-3 text-left font-medium text-text-muted">Título</th>
-                <th className="px-4 py-3 text-left font-medium text-text-muted">Estado</th>
-                <th className="px-4 py-3 text-left font-medium text-text-muted">Cursos</th>
-                <th className="px-4 py-3 text-left font-medium text-text-muted">Matriculados</th>
-                <th className="px-4 py-3 text-right font-medium text-text-muted">Acciones</th>
+                <th className="px-4 py-3 text-left font-medium text-text-muted">
+                  {t('rutas.colTitle')}
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-text-muted">
+                  {t('rutas.colStatus')}
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-text-muted">
+                  {t('rutas.colCourses')}
+                </th>
+                <th className="px-4 py-3 text-left font-medium text-text-muted">
+                  {t('rutas.colEnrolled')}
+                </th>
+                <th className="px-4 py-3 text-right font-medium text-text-muted">
+                  {t('rutas.colActions')}
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -159,7 +166,7 @@ export default function FormadorRutasPage() {
                       <span
                         className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_COLORS[path.status]}`}
                       >
-                        {STATUS_LABEL[path.status]}
+                        {labelOr(t, `rutaStatus.${path.status}`, path.status)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-text-muted">{path.courseCount}</td>
@@ -170,7 +177,7 @@ export default function FormadorRutasPage() {
                           href={`/formador/rutas/${path.id}`}
                           className="rounded-md border border-border px-3 py-1 text-xs hover:bg-background"
                         >
-                          Editar
+                          {t('rutas.edit')}
                         </Link>
                         {path.status !== 'ARCHIVED' && (
                           <button
@@ -178,7 +185,9 @@ export default function FormadorRutasPage() {
                             disabled={busy}
                             className="rounded-md border border-border px-3 py-1 text-xs hover:bg-background disabled:opacity-50"
                           >
-                            {path.status === 'PUBLISHED' ? 'Despublicar' : 'Publicar'}
+                            {path.status === 'PUBLISHED'
+                              ? t('rutas.unpublish')
+                              : t('rutas.publish')}
                           </button>
                         )}
                         {path.status !== 'ARCHIVED' ? (
@@ -187,7 +196,7 @@ export default function FormadorRutasPage() {
                             disabled={busy}
                             className="rounded-md border border-border px-3 py-1 text-xs text-amber-600 hover:bg-amber-50 disabled:opacity-50"
                           >
-                            Archivar
+                            {t('rutas.archive')}
                           </button>
                         ) : (
                           <button
@@ -195,7 +204,7 @@ export default function FormadorRutasPage() {
                             disabled={busy}
                             className="rounded-md border border-border px-3 py-1 text-xs hover:bg-background disabled:opacity-50"
                           >
-                            Restaurar
+                            {t('rutas.restore')}
                           </button>
                         )}
                       </div>

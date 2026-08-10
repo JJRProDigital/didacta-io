@@ -18,11 +18,11 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { extractClientContext } from '../auth/client-context';
-import { resolveWebBaseUrl } from '../common/resolve-web-base-url';
 import { CurrentUser } from '../auth/decorators';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { SessionClaims } from '../auth/token.service';
 import { ZodValidationPipe } from '../auth/zod-validation.pipe';
+import { TenantResolverService } from '../tenancy/tenant-resolver.service';
 import { InvitationsService } from './invitations.service';
 
 const listQuerySchema = z.object({
@@ -52,7 +52,10 @@ const ADMIN_ROLES = new Set(['super_admin', 'tenant_admin']);
 function requireAdmin(user: SessionClaims | undefined): SessionClaims {
   if (!user) throw new UnauthorizedException();
   if (!user.roles.some((r) => ADMIN_ROLES.has(r))) {
-    throw new ForbiddenException('Esta acción requiere rol de administrador.');
+    throw new ForbiddenException({
+      message: 'Esta acción requiere rol de administrador.',
+      code: 'ADMIN_FORBIDDEN_ADMIN_ROLE_REQUIRED',
+    });
   }
   return user;
 }
@@ -71,7 +74,10 @@ function requireAdmin(user: SessionClaims | undefined): SessionClaims {
 @Controller('admin/invitations')
 @UseGuards(JwtAuthGuard)
 export class InvitationsController {
-  constructor(private readonly service: InvitationsService) {}
+  constructor(
+    private readonly service: InvitationsService,
+    private readonly tenantResolver: TenantResolverService,
+  ) {}
 
   @Get('summary')
   @ApiOperation({ summary: 'Contadores: invitados, activados tras la invitación, sin invitar.' })
@@ -111,7 +117,7 @@ export class InvitationsController {
     return this.service.startBatch(
       u.tenantId,
       u.sub,
-      resolveWebBaseUrl(req),
+      await this.tenantResolver.resolveTenantWebBaseUrl(u.tenantId, req),
       extractClientContext(req),
       dto,
     );

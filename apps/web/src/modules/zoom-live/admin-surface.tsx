@@ -14,12 +14,13 @@
 /// por ZIP; para un built-in devuelve 404 "no está instalado"). Patrón correcto,
 /// igual que el resto de módulos core in-tree (community, payment-connections…).
 
+import { useTranslations } from 'next-intl';
 import { useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ApiHttpError } from '@/lib/api-client';
+import { apiErrorMessage } from '@/lib/i18n/api-error';
 import { zoomLiveApi } from './client';
 
 type TestStatus =
@@ -29,7 +30,14 @@ type TestStatus =
   | { error: string };
 
 export function ZoomAdminSurface() {
-  const [draft, setDraft] = useState({ accountId: '', clientId: '', clientSecret: '' });
+  const t = useTranslations('modZoomLive');
+  const tErrors = useTranslations('errors');
+  const [draft, setDraft] = useState({
+    accountId: '',
+    clientId: '',
+    clientSecret: '',
+    webhookSecret: '',
+  });
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<TestStatus>('idle');
@@ -43,26 +51,31 @@ export function ZoomAdminSurface() {
         accountId: draft.accountId.trim(),
         clientId: draft.clientId.trim(),
         clientSecret: draft.clientSecret,
+        // Siempre se manda (aunque vacío): el merge del backend conserva el
+        // guardado previo cuando llega vacío, igual que clientSecret. Si se
+        // omitiera la clave por completo del body, el merge no tendría nada
+        // que preservar.
+        webhookSecret: draft.webhookSecret,
       });
       setStatus('saved');
-      setDraft((s) => ({ ...s, clientSecret: '' }));
+      setDraft((s) => ({ ...s, clientSecret: '', webhookSecret: '' }));
     } catch (e) {
       setStatus('error');
-      setErrMsg(e instanceof ApiHttpError ? e.message : 'No pudimos guardar las credenciales.');
+      setErrMsg(apiErrorMessage(e, tErrors));
     }
   }
 
   async function handleClear() {
-    if (!confirm('¿Borrar las credenciales Zoom S2S? Las sesiones nuevas caerán al stub.')) return;
+    if (!confirm(t('admin.clearConfirm'))) return;
     setStatus('saving');
     setErrMsg(null);
     try {
       await zoomLiveApi.removeCredentials();
       setStatus('saved');
-      setDraft({ accountId: '', clientId: '', clientSecret: '' });
+      setDraft({ accountId: '', clientId: '', clientSecret: '', webhookSecret: '' });
     } catch (e) {
       setStatus('error');
-      setErrMsg(e instanceof ApiHttpError ? e.message : 'No pudimos borrar las credenciales.');
+      setErrMsg(apiErrorMessage(e, tErrors));
     }
   }
 
@@ -72,26 +85,20 @@ export function ZoomAdminSurface() {
       const res = await zoomLiveApi.testCredentials();
       setTestStatus(res);
     } catch (e) {
-      setTestStatus({
-        error: e instanceof ApiHttpError ? e.message : 'No pudimos validar las credenciales.',
-      });
+      setTestStatus({ error: apiErrorMessage(e, tErrors) });
     }
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Aula virtual · Zoom Server-to-Server</CardTitle>
-        <CardDescription>
-          Pega las credenciales Server-to-Server OAuth de tu cuenta Zoom. Se guardan cifradas
-          (AES-256-GCM) y nunca se devuelven en claro. Si las dejas vacías, el módulo cae al stub de
-          desarrollo.
-        </CardDescription>
+        <CardTitle>{t('admin.title')}</CardTitle>
+        <CardDescription>{t('admin.description')}</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSave} className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="zoom-account">Account ID</Label>
+            <Label htmlFor="zoom-account">{t('admin.accountId')}</Label>
             <Input
               id="zoom-account"
               required
@@ -102,7 +109,7 @@ export function ZoomAdminSurface() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="zoom-client">Client ID</Label>
+            <Label htmlFor="zoom-client">{t('admin.clientId')}</Label>
             <Input
               id="zoom-client"
               required
@@ -113,7 +120,7 @@ export function ZoomAdminSurface() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="zoom-secret">Client Secret</Label>
+            <Label htmlFor="zoom-secret">{t('admin.clientSecret')}</Label>
             <Input
               id="zoom-secret"
               required
@@ -123,9 +130,25 @@ export function ZoomAdminSurface() {
               autoComplete="new-password"
             />
           </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="zoom-webhook-secret">{t('admin.webhookSecret')}</Label>
+            <Input
+              id="zoom-webhook-secret"
+              type="password"
+              value={draft.webhookSecret}
+              onChange={(e) => setDraft({ ...draft, webhookSecret: e.target.value })}
+              autoComplete="new-password"
+              placeholder={t('admin.webhookSecretPlaceholder')}
+            />
+            <p className="text-xs text-text-subtle">
+              {t.rich('admin.webhookSecretHint', {
+                code: (chunks) => <code className="font-mono">{chunks}</code>,
+              })}
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
             <Button type="submit" disabled={status === 'saving'}>
-              {status === 'saving' ? 'Guardando…' : 'Guardar credenciales'}
+              {status === 'saving' ? t('admin.saving') : t('admin.save')}
             </Button>
             <Button
               type="button"
@@ -133,13 +156,13 @@ export function ZoomAdminSurface() {
               onClick={handleTest}
               disabled={testStatus === 'testing'}
             >
-              {testStatus === 'testing' ? 'Probando…' : 'Probar credenciales'}
+              {testStatus === 'testing' ? t('admin.testing') : t('admin.test')}
             </Button>
             <Button type="button" variant="ghost" onClick={handleClear}>
-              Borrar credenciales
+              {t('admin.clear')}
             </Button>
             {status === 'saved' ? (
-              <span className="text-sm text-success-700">✓ Guardado cifrado.</span>
+              <span className="text-sm text-success-700">{t('admin.saved')}</span>
             ) : null}
             {status === 'error' && errMsg ? (
               <span className="text-sm text-danger-700">{errMsg}</span>
@@ -148,13 +171,13 @@ export function ZoomAdminSurface() {
           {typeof testStatus === 'object' && 'kind' in testStatus ? (
             <div className="sm:col-span-2 rounded-lg border border-success-100 bg-success-50 p-3 text-sm text-success-700">
               {testStatus.kind === 'real'
-                ? `✓ Credenciales válidas. Vinculado a la cuenta Zoom ${testStatus.accountId}.`
-                : '⚠ El módulo está usando el stub local — no hay credenciales reales configuradas todavía.'}
+                ? t('admin.testOk', { accountId: testStatus.accountId })
+                : t('admin.testStub')}
             </div>
           ) : null}
           {typeof testStatus === 'object' && 'error' in testStatus ? (
             <div className="sm:col-span-2 rounded-lg border border-danger-100 bg-danger-50 p-3 text-sm text-danger-700">
-              ✗ {testStatus.error}
+              {t('admin.testError', { message: testStatus.error })}
             </div>
           ) : null}
         </form>

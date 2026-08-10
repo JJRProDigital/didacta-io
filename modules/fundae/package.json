@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Módulo Fundae: acciones formativas + export XML para subvenciones (mod.fundae)",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -18,7 +19,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.tests.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist .turbo"
@@ -35,8 +36,8 @@
     "@types/archiver": "^6.0.3",
     "@types/node": "^22.10.2",
     "@types/pdfkit": "^0.13.9",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.0",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.7"
   }
 }

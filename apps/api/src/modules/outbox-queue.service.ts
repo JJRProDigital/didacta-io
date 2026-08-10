@@ -14,7 +14,9 @@ import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import IORedis, { type Redis } from 'ioredis';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import { ModuleContextFactory } from './module-context.factory';
+import { enqueueOutboxJob, type OutboxJobQueuePort } from './outbox-enqueue';
 import { OutboxMetrics } from './outbox.metrics';
+import type { EnqueueOutcome, OutboxJobRef } from './persistent-event-bus';
 
 const QUEUE_NAME = 'didacta.outbox';
 
@@ -132,23 +134,71 @@ export class OutboxQueueService implements OnApplicationBootstrap, OnModuleDestr
   }
 
   /**
+   * Cuántos workers hay ENCHUFADOS a esta cola en este Redis, contando los de
+   * otros procesos.
+   *
+   * No es una curiosidad: BullMQ entrega cada job a **un solo** worker. Si dos
+   * procesos distintos se suscriben a `didacta.outbox` sobre el mismo Redis,
+   * los eventos se reparten entre ellos al azar, y los que se lleva el otro
+   * proceso **jamás llegan a los bridges de éste** — pero la fila de
+   * `outbox_event` vuelve marcada `processed_at` sin error, indistinguible de
+   * una entrega correcta. Es exactamente el modo de fallo que dejó tres specs
+   * E2E cayendo de forma intermitente durante varias sesiones: un API huérfano
+   * de otra sesión seguía atado al Redis del arnés y se comía la mitad del
+   * tráfico del bus.
+   *
+   * `getWorkers()` es de BullMQ y no necesita cooperación del otro proceso:
+   * cada worker nombra su conexión bloqueante `bull:<base64(cola)>` al
+   * conectarse, así que un binario viejo también se cuenta.
+   *
+   * En producción con N réplicas el valor esperado es N; el número no es
+   * bueno ni malo por sí solo, por eso se EXPONE (health-detail) en vez de
+   * convertirlo en un error aquí. Quien sabe cuántos debería haber es el
+   * operador — o el arnés E2E, que sabe que debe ser exactamente 1.
+   */
+  async countWorkers(): Promise<number> {
+    if (!this.queue) return 0;
+    return (await this.queue.getWorkers()).length;
+  }
+
+  /**
    * Encola el despacho de un evento ya persistido en outbox_event.
    *
-   * El `jobId` deriva del `outboxId` para que BullMQ deduplique si el mismo
-   * evento se reencola (ej. reintento + recovery worker). Con prefijo: BullMQ
-   * rechaza custom ids enteros («Custom Id cannot be integers») — con el id
-   * numérico pelado TODOS los enqueue fallaban en silencio y el bus caía
-   * siempre al fallback in-process, dejando la cola sin uso real.
+   * El `jobId` sigue derivándose de la fila para que BullMQ deduplique cuando
+   * el mismo evento se reencola (publish + failsafe, o varias réplicas de la
+   * API a la vez), pero ya no del BIGSERIAL a secas: ver `buildOutboxJobId`.
+   *
+   * Devuelve el desenlace en vez de `void` porque un `add` puede quedar
+   * absorbido por un job terminal homónimo sin que BullMQ lo diga. El llamante
+   * NECESITA distinguirlo: `recoverPending()` lo contaba como procesado y el
+   * failsafe reportaba éxito sin haber entregado nada.
    */
-  async enqueue(outboxId: bigint): Promise<void> {
-    if (!this.queue) {
+  async enqueue(ref: OutboxJobRef): Promise<EnqueueOutcome> {
+    const queue = this.queue;
+    if (!queue) {
       throw new Error('OutboxQueueService no inicializada (REDIS_URL ausente)');
     }
-    await this.queue.add(
-      'dispatch',
-      { outboxId: outboxId.toString() },
-      { jobId: `outbox-${outboxId.toString()}` },
-    );
+    const outboxId = ref.id.toString();
+    const port: OutboxJobQueuePort = {
+      add: (jobId) => queue.add('dispatch', { outboxId }, { jobId }),
+      remove: (jobId) => queue.remove(jobId),
+    };
+    return enqueueOutboxJob(port, ref, {
+      onReplaced: (jobId) => {
+        this.metrics.recordEnqueueCollision('replaced');
+        this.logger.warn(
+          { jobId, outboxId },
+          'outbox enqueue chocó con un job ya terminado: retirado y reencolado',
+        );
+      },
+      onSwallowed: (jobId) => {
+        this.metrics.recordEnqueueCollision('swallowed');
+        this.logger.error(
+          { jobId, outboxId },
+          'outbox enqueue absorbido por un job terminal irreemplazable: el evento NO se despachará por la cola',
+        );
+      },
+    });
   }
 
   /** Health check de Redis. Devuelve true si PING contesta PONG. */

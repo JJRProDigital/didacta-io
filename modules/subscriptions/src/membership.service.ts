@@ -36,10 +36,12 @@ import {
   MembershipPlanIntervalInvalidError,
   MembershipPlanNotFoundError,
   StripeApiError,
-  StripeConfigMissingError,
 } from './errors.js';
 import type { SubscriptionsStripeAdapter } from './stripe-subscriptions.client.js';
-import type { SubscriptionsEventPublisher } from './subscriptions.service.js';
+import type {
+  SubscriptionsEventPublisher,
+  SubscriptionsStripeAdapterResolver,
+} from './subscriptions.service.js';
 
 type PlanRow = Awaited<ReturnType<PrismaClient['modSubscriptionsPlan']['create']>>;
 type ConfigRow = Awaited<ReturnType<PrismaClient['modSubscriptionsMembershipConfig']['upsert']>>;
@@ -156,13 +158,19 @@ export type UserProvisioner = (args: {
   tenantId: string;
   email: string;
   name: string | null;
+  /**
+   * Idioma con el que el comprador estaba navegando al pagar, capturado en
+   * `startMembershipCheckout` y transportado en la metadata de la sesión (es lo
+   * único que sobrevive al salto a Stripe). Opaco para este módulo: lo valida y
+   * lo persiste el host, y SOLO si crea la fila.
+   */
+  locale?: string;
 }) => Promise<{ userId: string; created: boolean }>;
 
 export class MembershipService {
   constructor(
     private readonly prisma: PrismaClient,
-    /** null si la instancia no tiene STRIPE_SECRET_KEY: config/planes siguen operativos, checkout no. */
-    private readonly stripe: SubscriptionsStripeAdapter | null,
+    private readonly stripeFor: SubscriptionsStripeAdapterResolver,
     private readonly publisher: SubscriptionsEventPublisher,
   ) {}
 
@@ -227,9 +235,10 @@ export class MembershipService {
     // Renombrar el plan renombra su Product en Stripe (es el nombre que ve el
     // comprador en el checkout). Best-effort: si Stripe falla o no hay clave, el
     // nombre se resincroniza en el próximo checkout que recree el price/product.
-    if (nameChanged && this.stripe && updated.stripeProductId) {
+    if (nameChanged && updated.stripeProductId) {
       try {
-        await this.stripe.updateProduct(updated.stripeProductId, updated.name);
+        const stripe = await this.stripeFor(tenantId);
+        await stripe.updateProduct(updated.stripeProductId, updated.name);
       } catch {
         /* no bloquea la edición del plan */
       }
@@ -412,8 +421,14 @@ export class MembershipService {
      * el payload del evento de activación — este módulo NO lo interpreta.
      */
     referralCode?: string;
+    /**
+     * Idioma activo de la UI del comprador. Viaja opaco en la metadata de la
+     * session y vuelve en el webhook, que es lo único que sobrevive al salto a
+     * Stripe: la fila de `user` no existe todavía cuando se inicia el checkout.
+     * Este módulo NO lo interpreta ni lo valida — lo hace el host.
+     */
+    locale?: string;
   }): Promise<{ url: string; sessionId: string }> {
-    if (!this.stripe) throw new StripeConfigMissingError('secretKey');
     const config = await this.getConfig(args.tenantId);
     if (!config.active) throw new MembershipPageInactiveError();
 
@@ -422,9 +437,10 @@ export class MembershipService {
     });
     if (!plan) throw new MembershipPlanNotFoundError(args.planId);
 
-    const priceId = await this.ensureStripePrice(plan);
+    const stripe = await this.stripeFor(args.tenantId);
+    const priceId = await this.ensureStripePrice(plan, stripe);
 
-    const session = await this.stripe.createCheckoutSession({
+    const session = await stripe.createCheckoutSession({
       priceId,
       successUrl: args.successUrl,
       cancelUrl: args.cancelUrl,
@@ -437,6 +453,7 @@ export class MembershipService {
         membership: '1',
         planId: plan.id,
         ...(args.referralCode ? { referralCode: args.referralCode } : {}),
+        ...(args.locale ? { locale: args.locale } : {}),
       },
     });
     return { url: session.url, sessionId: session.id };
@@ -447,8 +464,10 @@ export class MembershipService {
    * Product por tenant (reutilizado entre planes); price por plan, rotado si
    * el admin cambió el importe (updatePlan limpia stripePriceId).
    */
-  private async ensureStripePrice(plan: PlanRow): Promise<string> {
-    if (!this.stripe) throw new StripeConfigMissingError('secretKey');
+  private async ensureStripePrice(
+    plan: PlanRow,
+    stripe: SubscriptionsStripeAdapter,
+  ): Promise<string> {
     if (plan.stripePriceId) return plan.stripePriceId;
 
     let productId = plan.stripeProductId;
@@ -457,14 +476,14 @@ export class MembershipService {
       // checkout muestra "Plan Anual" (el nombre que ve el comprador es el
       // del Product de su price). El nombre lo controla el admin desde el nombre
       // del plan; renombrarlo lo resincroniza en Stripe (ver updatePlan).
-      productId = await this.stripe.createProduct(plan.name, {
+      productId = await stripe.createProduct(plan.name, {
         tenantId: plan.tenantId,
         planId: plan.id,
         didacta: 'membership',
       });
     }
 
-    const priceId = await this.stripe.createRecurringPrice({
+    const priceId = await stripe.createRecurringPrice({
       productId,
       amountCents: plan.amountCents,
       currency: plan.currency,
@@ -523,6 +542,10 @@ export class MembershipService {
       tenantId,
       email: email.trim().toLowerCase(),
       name: session.customer_details?.name ?? null,
+      // Idioma con el que compró (lo escribió `startMembershipCheckout`). Va sin
+      // validar a propósito: quien escribe la fila de `user` es el host y es él
+      // quien decide qué locales acepta.
+      locale: meta['locale'],
     });
 
     // Trial: si el plan tiene días de prueba, la sub nace TRIALING (con
@@ -575,14 +598,14 @@ export class MembershipService {
    * pestaña Suscripción de la cuenta.
    */
   async payNow(tenantId: string, userId: string): Promise<MembershipSubscriptionRow> {
-    if (!this.stripe) throw new StripeConfigMissingError('secretKey');
     const sub = await this.prisma.modSubscriptionsSubscription.findFirst({
       where: { tenantId, userId, planId: { not: null }, status: 'TRIALING' },
       orderBy: { createdAt: 'desc' },
     });
     if (!sub || !sub.stripeSubscriptionId) throw new MembershipNotTrialingError();
 
-    const view = await this.stripe.endTrialNow(sub.stripeSubscriptionId);
+    const stripe = await this.stripeFor(tenantId);
+    const view = await stripe.endTrialNow(sub.stripeSubscriptionId);
 
     // Desbloqueo SOLO con evidencia de cobro: status active + invoice PAGADA
     // (Stripe puede devolver 'active' con la invoice aún cobrándose, y un

@@ -7,10 +7,12 @@
 
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { useLocale, useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Icon } from '@/components/icon';
 import { ApiHttpError } from '@/lib/api-client';
+import { formatDate } from '@/lib/i18n/format';
 import { useTenantDisplayName } from '@/lib/tenant-context';
 import { certificatesApi, type PublicCertificateView } from '@/modules/certificates';
 
@@ -21,6 +23,8 @@ type State = 'loading' | 'ok' | 'notfound' | 'error';
  * se comparte / que LinkedIn referencia. Muestra solo datos no sensibles.
  */
 export default function VerifyCertificatePage() {
+  const t = useTranslations('publicSite');
+  const locale = useLocale();
   const params = useParams<{ id: string }>();
   // La API pública no devuelve el emisor: usamos el nombre del tenant resuelto
   // por host (misma resolución que el resto de pantallas sin sesión).
@@ -64,11 +68,9 @@ export default function VerifyCertificatePage() {
               </div>
               <div>
                 <h1 className="font-display text-xl font-bold text-text">
-                  Certificado no encontrado
+                  {t('verificar.notFoundTitle')}
                 </h1>
-                <p className="mt-1 text-sm text-text-muted">
-                  No existe ningún certificado con ese identificador. Comprueba el enlace.
-                </p>
+                <p className="mt-1 text-sm text-text-muted">{t('verificar.notFoundBody')}</p>
               </div>
             </>
           ) : state === 'error' ? (
@@ -78,9 +80,9 @@ export default function VerifyCertificatePage() {
               </div>
               <div>
                 <h1 className="font-display text-xl font-bold text-text">
-                  No pudimos verificar ahora
+                  {t('verificar.errorTitle')}
                 </h1>
-                <p className="mt-1 text-sm text-text-muted">Inténtalo de nuevo en unos minutos.</p>
+                <p className="mt-1 text-sm text-text-muted">{t('verificar.errorBody')}</p>
               </div>
             </>
           ) : cert ? (
@@ -97,27 +99,32 @@ export default function VerifyCertificatePage() {
               <div className="space-y-1">
                 {cert.valid ? (
                   <Badge variant="success" dot>
-                    Certificado verificado
+                    {t('verificar.verifiedBadge')}
                   </Badge>
                 ) : (
                   <Badge variant="danger" dot>
-                    Certificado revocado
+                    {t('verificar.revokedBadge')}
                   </Badge>
                 )}
                 <h1 className="font-display text-2xl font-bold text-text">{cert.studentName}</h1>
                 <p className="text-text-muted">
-                  ha completado el curso <strong className="text-text">{cert.courseTitle}</strong>
+                  {t.rich('verificar.completedCourse', {
+                    title: cert.courseTitle,
+                    strong: (chunks) => <strong className="text-text">{chunks}</strong>,
+                  })}
                 </p>
               </div>
               <dl className="mx-auto grid max-w-xs grid-cols-2 gap-x-4 gap-y-2 border-t border-border pt-4 text-left text-sm">
-                <dt className="text-text-subtle">Fecha de emisión</dt>
+                <dt className="text-text-subtle">{t('verificar.issuedAt')}</dt>
                 <dd className="text-right font-medium text-text tabular-nums">
-                  {formatDate(cert.issuedAt)}
+                  {issuedDateLabel(cert.issuedAt, locale)}
                 </dd>
-                <dt className="text-text-subtle">Nº de certificado</dt>
+                <dt className="text-text-subtle">{t('verificar.certNumber')}</dt>
                 <dd className="text-right font-mono text-text">{cert.number}</dd>
               </dl>
-              <p className="text-xs text-text-subtle">Verificado por {tenantName}</p>
+              <p className="text-xs text-text-subtle">
+                {t('verificar.verifiedBy', { name: tenantName })}
+              </p>
             </>
           ) : null}
         </CardContent>
@@ -126,8 +133,14 @@ export default function VerifyCertificatePage() {
   );
 }
 
-function formatDate(iso: string): string {
+/**
+ * El `locale` va EXPLÍCITO: esta es un área pública que sí se pinta en SSR, y
+ * ahí el singleton de `user-prefs` está vacío a propósito. Sin él el servidor
+ * pintaría la fecha con el locale por defecto y el cliente la repintaría con el
+ * activo → mismatch de hidratación visible.
+ */
+function issuedDateLabel(iso: string, locale: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' });
+  return formatDate(d, { locale, day: '2-digit', month: 'long', year: 'numeric' });
 }

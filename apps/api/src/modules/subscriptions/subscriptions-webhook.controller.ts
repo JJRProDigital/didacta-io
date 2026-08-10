@@ -7,6 +7,7 @@ import {
   BadRequestException,
   Controller,
   HttpCode,
+  NotFoundException,
   Post,
   RawBodyRequest,
   Req,
@@ -14,25 +15,31 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Logger as PinoLogger } from 'nestjs-pino';
-import { WebhookSignatureInvalidError } from '@didacta/mod-subscriptions';
+import {
+  SubscriptionsStripeSdkAdapter,
+  WebhookSignatureInvalidError,
+} from '@didacta/mod-subscriptions';
 import type Stripe from 'stripe';
 import type { FastifyRequest } from 'fastify';
 import { extractClientContext } from '../../auth/client-context';
 import type { ClientContext } from '../../auth/client-context';
-import { resolveWebBaseUrl } from '../../common/resolve-web-base-url';
 import {
   runAsTenantOrSanctioned,
   runSanctionedGlobalAccess,
 } from '../../tenancy/tenant-context.storage';
+import { TenantResolverService } from '../../tenancy/tenant-resolver.service';
 import { BillingProvisioningService } from '../billing/billing-provisioning.service';
 import { ModuleRegistryService } from '../module-registry.service';
+import { TenantStripeResolverService } from '../tenant-stripe-resolver.service';
 import { MembershipProvisioningService } from './membership-provisioning.service';
 
 /**
  * Endpoint público de webhooks de Stripe específico de mod.subscriptions.
- * Misma defensa HMAC que mod.billing webhook pero con su propio
- * STRIPE_WEBHOOK_SECRET (puede ser distinto al de billing — Stripe permite
- * múltiples endpoints firmados con distintos secrets).
+ * Misma defensa HMAC que mod.billing webhook (tenant por Host → credenciales
+ * de ESE tenant, Administración → Pagos, con fallback a las envs de
+ * instancia) pero con su propio `subscriptionsWebhookSecret` (puede ser
+ * distinto al de billing — Stripe permite múltiples endpoints firmados con
+ * distintos secrets).
  *
  * Idempotencia: PK natural `stripe_event_id` en `mod_subscriptions_webhook_event`.
  */
@@ -44,6 +51,8 @@ export class SubscriptionsWebhookController {
     private readonly provisioning: MembershipProvisioningService,
     private readonly billingProvisioning: BillingProvisioningService,
     private readonly logger: PinoLogger,
+    private readonly tenantResolver: TenantResolverService,
+    private readonly stripeResolver: TenantStripeResolverService,
   ) {}
 
   @Post('webhook')
@@ -54,19 +63,62 @@ export class SubscriptionsWebhookController {
   })
   async handle(@Req() req: RawBodyRequest<FastifyRequest>) {
     const subs = this.registry.getSubscriptionsService();
-    const stripe = this.registry.getSubscriptionsStripeAdapter();
+
+    const hostHeader = req.headers.host ?? req.headers['x-forwarded-host'];
+    const hostStr = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader;
+    const tenant = await runSanctionedGlobalAccess(() =>
+      this.tenantResolver.resolveByHost(hostStr),
+    );
+    if (!tenant) {
+      throw new NotFoundException({
+        message: 'No se reconoce el dominio de este webhook.',
+        code: 'SUBS_WEBHOOK_UNKNOWN_DOMAIN',
+      });
+    }
+
+    const resolved = await runAsTenantOrSanctioned(tenant.id, () =>
+      this.stripeResolver.resolve(tenant.id),
+    );
+    if (!resolved) {
+      throw new UnauthorizedException({
+        message: 'Stripe no está configurado para este tenant.',
+        code: 'SUBS_STRIPE_NOT_CONFIGURED',
+      });
+    }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const StripeCtor = require('stripe').default ?? require('stripe');
+    const stripe = new SubscriptionsStripeSdkAdapter(
+      resolved.credentials.secretKey,
+      resolved.credentials.subscriptionsWebhookSecret || resolved.credentials.webhookSecret,
+      StripeCtor,
+    );
 
     const signature = readHeader(req.headers, 'stripe-signature');
-    if (!signature) throw new UnauthorizedException('stripe-signature ausente.');
+    if (!signature)
+      throw new UnauthorizedException({
+        message: 'stripe-signature ausente.',
+        code: 'SUBS_WEBHOOK_SIGNATURE_MISSING',
+      });
     const rawBody = req.rawBody?.toString('utf8') ?? '';
-    if (!rawBody) throw new BadRequestException('Body raw vacío — Stripe siempre envía payload.');
+    if (!rawBody)
+      throw new BadRequestException({
+        message: 'Body raw vacío — Stripe siempre envía payload.',
+        code: 'SUBS_WEBHOOK_EMPTY_BODY',
+      });
 
     let event;
     try {
       event = stripe.constructWebhookEvent(rawBody, signature);
     } catch (err) {
       if (err instanceof WebhookSignatureInvalidError) throw err;
-      throw new UnauthorizedException(`Firma del webhook inválida: ${(err as Error).message}`);
+      // Ídem `BILLING_WEBHOOK_SIGNATURE_REJECTED`: el diagnóstico del SDK de
+      // Stripe viaja aparte del `message`.
+      const detail = (err as Error).message;
+      throw new UnauthorizedException({
+        message: `Firma del webhook inválida: ${detail}`,
+        code: 'SUBS_WEBHOOK_SIGNATURE_REJECTED',
+        detail,
+      });
     }
 
     let parsedBody: unknown;
@@ -90,7 +142,10 @@ export class SubscriptionsWebhookController {
     // Stripe no duplica user ni sub. Va DESPUÉS de handleWebhookEvent (que
     // persiste el evento para auditoría) y es independiente de su dedupe.
     const ctx = extractClientContext(req);
-    const webBaseUrl = resolveWebBaseUrl(req);
+    // El Host de este request es el de la API (Stripe), no el del frontend
+    // del tenant — con el tenant ya resuelto arriba, preferimos su dominio
+    // primario (puede ser null si el evento no tiene tenant reconocible).
+    const webBaseUrl = await this.tenantResolver.resolveTenantWebBaseUrl(tenantId, req);
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as Stripe.Checkout.Session;
       // RLS F3: el tenant de la membresía viaja en la metadata de la session
@@ -103,14 +158,20 @@ export class SubscriptionsWebhookController {
         () =>
           this.registry
             .getMembershipService()
-            .fulfillMembershipCheckout(session, ({ tenantId: provisionTenantId, email, name }) =>
-              this.provisioning.provision({
-                tenantId: provisionTenantId,
-                email,
-                name,
-                webBaseUrl,
-                ctx,
-              }),
+            .fulfillMembershipCheckout(
+              session,
+              ({ tenantId: provisionTenantId, email, name, locale }) =>
+                this.provisioning.provision({
+                  tenantId: provisionTenantId,
+                  email,
+                  name,
+                  // Idioma con el que compró, capturado al iniciar el checkout
+                  // y transportado en la metadata de la session. El service lo
+                  // valida y solo lo escribe si CREA la fila.
+                  locale,
+                  webBaseUrl,
+                  ctx,
+                }),
             ),
         { traceLabel: 'membership-fulfillment' },
       );
@@ -135,12 +196,7 @@ export class SubscriptionsWebhookController {
     webBaseUrl: string,
     ctx: ClientContext,
   ): Promise<void> {
-    let billing: ReturnType<ModuleRegistryService['getBillingService']>;
-    try {
-      billing = this.registry.getBillingService();
-    } catch {
-      return; // mod.billing sin configurar en esta instancia: nada que hacer.
-    }
+    const billing = this.registry.getBillingService();
     try {
       // Mismo provisioner que el endpoint propio de billing: una compra
       // ANÓNIMA de curso puede entrar por este webhook compartido.
@@ -153,11 +209,12 @@ export class SubscriptionsWebhookController {
         billingTenantId,
         () =>
           billing.handleWebhookEvent(event, parsedBody, {
-            provisionUser: ({ tenantId: provisionTenantId, email, name }) =>
+            provisionUser: ({ tenantId: provisionTenantId, email, name, locale }) =>
               this.billingProvisioning.provision({
                 tenantId: provisionTenantId,
                 email,
                 name,
+                locale,
                 webBaseUrl,
                 ctx,
               }),

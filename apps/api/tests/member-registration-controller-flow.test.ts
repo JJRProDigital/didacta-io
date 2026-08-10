@@ -24,6 +24,7 @@ import {
 import { MemberRegistrationPublicController } from '../src/modules/member-registration/member-registration-public.controller';
 import type { EffectiveRegistrationPolicy } from '@didacta/mod-member-registration';
 import { signTicket } from '@didacta/mod-member-registration';
+import { resolveWebBaseUrl, type RequestLike } from '../src/common/resolve-web-base-url';
 
 const AUTH_SECRET = 'secret-de-test-suficientemente-largo';
 const TENANT_ID = 'tenant-1';
@@ -64,7 +65,14 @@ function makeController(effectivePolicy: EffectiveRegistrationPolicy) {
       botUsername: effectivePolicy.botUsername,
     }),
   };
-  const tenantResolver = { resolveByHost: vi.fn().mockResolvedValue({ id: TENANT_ID }) };
+  const tenantResolver = {
+    resolveByHost: vi.fn().mockResolvedValue({ id: TENANT_ID }),
+    // Sin BD real en este harness: delega en la misma cascada pura que usaba
+    // el controller antes de F5 (env → Host del request → localhost).
+    resolveTenantWebBaseUrl: vi.fn(async (_tenantId: string | null, req?: RequestLike) =>
+      resolveWebBaseUrl(req),
+    ),
+  };
 
   const controller = new MemberRegistrationPublicController(
     telegram as never,
@@ -190,7 +198,7 @@ describe('MemberRegistrationPublicController · otp/verify', () => {
       password: 'x'.repeat(12),
       verificationToken,
     } as never);
-    const input = registration.createPending.mock.calls[0][1];
+    const input = registration.createPending.mock.calls[0]![1];
     expect(input.telegramId).toBeNull();
     expect(input.inGroup).toBe('unknown');
     expect(input.email).toBe('a@x.com');
@@ -228,7 +236,7 @@ describe('MemberRegistrationPublicController · register', () => {
       email: ' Ana@X.com ',
     } as never);
     expect(res).toEqual({ ok: true, status: 'PENDING' });
-    const input = registration.createPending.mock.calls[0][1];
+    const input = registration.createPending.mock.calls[0]![1];
     expect(input.email).toBe('ana@x.com');
     expect(input.telegramId).toBeNull();
   });
@@ -275,7 +283,7 @@ describe('MemberRegistrationPublicController · register', () => {
       email: 'a@x.com',
       ticket,
     } as never);
-    const input = registration.createPending.mock.calls[0][1];
+    const input = registration.createPending.mock.calls[0]![1];
     expect(input.telegramId).toBe('42');
     expect(input.inGroup).toBe('false');
     expect(input.email).toBe('a@x.com');

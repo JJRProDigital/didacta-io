@@ -19,8 +19,49 @@
  */
 
 import { apiFetch } from '@/lib/api-client';
+import { formatCurrency } from '@/lib/i18n/format';
+import type { TranslatorLike } from '@/lib/i18n/labels';
 
 export type PaymentConnectionStatus = 'PENDING' | 'VERIFIED' | 'ERROR' | 'DISCONNECTED';
+
+/** Forma con la que la badge de estado se pinta en el panel. */
+export interface ConnectionStatusStyle {
+  /** Sufijo de `adminPagos.connStatus.*`, o `null` si el estado es desconocido. */
+  key: 'verified' | 'error' | 'pending' | 'disconnected' | null;
+  className?: string;
+  variant?: 'outline';
+}
+
+const CONNECTION_STATUS_STYLES: Record<PaymentConnectionStatus, ConnectionStatusStyle> = {
+  VERIFIED: { key: 'verified', className: 'bg-success-600 text-white' },
+  ERROR: { key: 'error', className: 'bg-danger-600 text-white' },
+  PENDING: { key: 'pending', variant: 'outline' },
+  DISCONNECTED: { key: 'disconnected', variant: 'outline' },
+};
+
+/**
+ * Estilo neutro para un estado que este front no conoce. NO es un default
+ * implícito: es el destino deliberado de un enum que crece en la API antes de
+ * que se despliegue el web.
+ */
+const UNKNOWN_CONNECTION_STATUS_STYLE: ConnectionStatusStyle = { key: null, variant: 'outline' };
+
+/**
+ * Estilo de la badge de un estado de conexión.
+ *
+ * CAMINO DEGRADADO: `PaymentConnectionStatus` refleja un enum de Prisma que
+ * puede crecer sin que este front se entere (basta un deploy de API por
+ * delante del de web, o un módulo de terceros). Antes se indexaba el mapa a
+ * pelo y un estado nuevo daba `undefined`: leer `.key` reventaba con un
+ * TypeError que subía al error boundary y dejaba TODA la pantalla de conexiones
+ * de pago en blanco. Con `key: null` el caller pinta el código crudo — feo,
+ * pero la pantalla se ve y el admin puede seguir operando el resto de filas.
+ */
+export function connectionStatusStyle(status: string): ConnectionStatusStyle {
+  return (
+    CONNECTION_STATUS_STYLES[status as PaymentConnectionStatus] ?? UNKNOWN_CONNECTION_STATUS_STYLE
+  );
+}
 
 export interface ConnectionPublicMetadata {
   accountId?: string;
@@ -71,7 +112,12 @@ export type SubscriptionStatusCategory =
 
 export interface SubscriptionStatusInfo {
   category: SubscriptionStatusCategory;
-  /** Etiqueta legible en español (p.ej. "Dada de baja", "En impago"). */
+  /**
+   * Etiqueta legible en español. NO es copy de pantalla: es el espejo del enum
+   * del backend, y existe para que la guardia de paridad con el módulo
+   * (`payment-connections.test.ts`) detecte divergencias. Lo que pinta la UI es
+   * `subscriptionStatusLabel`, que sí resuelve el idioma activo.
+   */
   label: string;
   /** Si el estado concede acceso vigente hoy. */
   entitled: boolean;
@@ -116,6 +162,63 @@ export function classifySubscriptionStatus(status: string): SubscriptionStatusIn
     default:
       return { category: 'unknown', label: status || 'Desconocido', entitled: false };
   }
+}
+
+/** Sufijos de `adminPagos.subStatus.*` con los que la UI nombra cada estado. */
+export type SubscriptionStatusLabelKey =
+  | 'active'
+  | 'trialing'
+  | 'pastDue'
+  | 'unpaid'
+  | 'onHold'
+  | 'paused'
+  | 'pendingCancel'
+  | 'canceled'
+  | 'expired'
+  | 'incomplete'
+  | 'pending'
+  | 'unknown';
+
+/**
+ * Status crudo del proveedor (normalizado a minúsculas) → key de etiqueta en
+ * `adminPagos.subStatus.*`. Espejo de PRESENTACIÓN del diccionario de
+ * `classifySubscriptionStatus`: la categoría y el `entitled` los decide aquella
+ * (y su guardia de paridad con el módulo backend); el texto que ve el admin
+ * sale del catálogo, en el idioma activo.
+ */
+const SUB_STATUS_LABEL_KEYS: Record<string, SubscriptionStatusLabelKey> = {
+  active: 'active',
+  trialing: 'trialing',
+  past_due: 'pastDue',
+  unpaid: 'unpaid',
+  'on-hold': 'onHold',
+  paused: 'paused',
+  'pending-cancel': 'pendingCancel',
+  canceled: 'canceled',
+  cancelled: 'canceled',
+  expired: 'expired',
+  incomplete: 'incomplete',
+  incomplete_expired: 'incomplete',
+  pending: 'pending',
+};
+
+/**
+ * Etiqueta de pantalla del estado de una suscripción, EN EL IDIOMA ACTIVO.
+ *
+ * `t` = `useTranslations('adminPagos')` (los estados de suscripción viven en
+ * ese catálogo aunque los pinte una pantalla de otra sección; duplicar las doce
+ * etiquetas en un segundo namespace solo garantizaría que diverjan).
+ *
+ * CAMINO DEGRADADO: un status que este mapa no conoce devuelve el VALOR CRUDO
+ * del proveedor, nunca la key. Es la misma decisión que la de
+ * `classifySubscriptionStatus` en el módulo backend y se conserva a propósito:
+ * ante un estado nuevo de Stripe, al admin le sirve más «paused_indefinitely»
+ * que «Desconocido», y muchísimo más que ver `subStatus.undefined` en pantalla.
+ * Solo cuando el status llega vacío se cae a la etiqueta de «desconocido».
+ */
+export function subscriptionStatusLabel(status: string, t: TranslatorLike): string {
+  const key = SUB_STATUS_LABEL_KEYS[(status ?? '').toLowerCase().trim()];
+  return key ? t(`subStatus.${key}`) : status || t('subStatus.unknown');
 }
 
 export interface DidactaUserLite {
@@ -217,13 +320,21 @@ export const paymentConnectionsApi = {
   },
 };
 
-/** Importe en céntimos + moneda → "19,99 €". */
+/**
+ * Importe en céntimos + moneda → "19,99 €" en el LOCALE ACTIVO.
+ *
+ * Sigue conservando decimales SIEMPRE (no usa `formatCents`, que los quita en
+ * cantidades redondas): la moneda la manda un proveedor externo (Stripe,
+ * WooCommerce, PayPal) y estas cifras se leen contra su panel, donde «19,00 €»
+ * y «19 €» no son la misma línea. El `catch` también se queda: un código de
+ * moneda inválido del proveedor haría reventar a `Intl`.
+ */
 export function formatAmount(unitAmount: number | null, currency: string | null): string {
   if (unitAmount === null) return '—';
   const value = unitAmount / 100;
   const cur = (currency ?? 'eur').toUpperCase();
   try {
-    return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur }).format(value);
+    return formatCurrency(value, cur);
   } catch {
     return `${value.toFixed(2)} ${cur}`;
   }

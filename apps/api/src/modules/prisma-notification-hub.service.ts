@@ -17,7 +17,14 @@ import {
   type BrandingPrisma,
   type EmailBranding,
 } from '../common/branded-email';
-import { HUB_TEMPLATE_DEFAULTS, interpolate } from './notifications/email-template-catalog';
+import {
+  HUB_DEFAULT_LOCALE,
+  interpolate,
+  resolveFixedEmailCopy,
+  resolveHubDefault,
+  toHubTemplateLang,
+} from './notifications/email-template-catalog';
+import { resolveNotificationVariables } from './notifications/hub-values';
 
 /**
  * Implementación real del NotificationHub: persiste cada notificación en
@@ -64,7 +71,11 @@ export class PrismaNotificationHubService implements NotificationHubService {
     tenantId: string;
     channel: 'email' | 'in-app' | 'webhook';
     templateKey: string;
-    locale: string;
+    /**
+     * Opcional: sin él, el hub resuelve el idioma del destinatario (`to` es
+     * siempre un userId). Ver `resolveUserLocale` para los caminos degradados.
+     */
+    locale?: string;
     to: string;
     variables: Record<string, unknown>;
     category?: 'COMMUNITY' | 'LEARNING' | 'ASSESSMENTS' | 'SYSTEM';
@@ -95,13 +106,28 @@ export class PrismaNotificationHubService implements NotificationHubService {
       notification.tenantId,
       webBaseUrl,
     );
-    const renderVars = { tenantName: branding.tenantName, ...notification.variables };
+
+    // El idioma lo pone el destinatario salvo que el caller lo imponga. La
+    // consulta extra solo ocurre cuando el caller NO pasó locale.
+    const locale =
+      notification.locale ?? (await this.resolveUserLocale(notification.tenantId, notification.to));
+
+    // MUST-FIX 37 — los valores que DEPENDEN DEL IDIOMA (una fecha, un importe,
+    // una etiqueta de estado) llegan crudos y se formatean aquí, que es el
+    // único sitio que conoce el idioma del destinatario. Antes los componía el
+    // emisor con `es-ES` cableado y ninguna traducción del catálogo los
+    // alcanzaba: la plantilla salía en inglés con el dato en español dentro.
+    //
+    // Se resuelve ANTES de persistir, así que `metadata` y el evento realtime
+    // siguen guardando texto plano y nada aguas abajo ve un descriptor.
+    const variables = resolveNotificationVariables(notification.variables, locale);
+    const renderVars = { tenantName: branding.tenantName, ...variables };
 
     const rendered = await this.renderForTenant(
       notification.tenantId,
       notification.templateKey,
       channel,
-      notification.locale,
+      locale,
       renderVars,
     );
 
@@ -113,7 +139,7 @@ export class PrismaNotificationHubService implements NotificationHubService {
         templateKey: notification.templateKey,
         subject: rendered.subject ?? null,
         body: rendered.body,
-        metadata: notification.variables as never,
+        metadata: variables as never,
         sentAt: channel === 'IN_APP' ? new Date() : null,
       },
     });
@@ -127,7 +153,7 @@ export class PrismaNotificationHubService implements NotificationHubService {
         templateKey: notification.templateKey,
         subject: rendered.subject ?? null,
         createdAt: created.createdAt,
-        metadata: notification.variables,
+        metadata: variables,
       });
       return;
     }
@@ -141,6 +167,7 @@ export class PrismaNotificationHubService implements NotificationHubService {
         body: rendered.body,
         branding,
         webBaseUrl,
+        locale,
       });
       return;
     }
@@ -161,6 +188,13 @@ export class PrismaNotificationHubService implements NotificationHubService {
     body: string;
     branding: EmailBranding;
     webBaseUrl: string;
+    /**
+     * Idioma con el que se renderizó el cuerpo. OBLIGATORIO: es el mismo que
+     * ya resolvió `dispatch` (`notification.locale` o `user.locale`), y pasarlo
+     * explícito evita que el envoltorio de marca salga en otro idioma que el
+     * texto que envuelve.
+     */
+    locale: string;
   }): Promise<void> {
     if (!this.tenantConfig || !this.smtp) {
       // El hub se construyó en modo legacy (sin TenantConfig) — log y skip.
@@ -221,14 +255,24 @@ export class PrismaNotificationHubService implements NotificationHubService {
 
     // Envuelve el cuerpo renderizado en la plantilla de marca del tenant
     // (logo, color, firma con el nombre del tenant, footer "Powered by Didacta").
+    // El cuerpo ya viene renderizado en el idioma del destinatario; el botón y
+    // la nota del footer son ESTRUCTURALES (un override del tenant no los
+    // puede quitar) y hasta ahora salían cableados en español, así que un
+    // miembro con `locale = en-US` recibía un email inglés con el botón en
+    // español. Mismo `locale` que el cuerpo, mismo catálogo.
+    const copyVars = { tenantName: args.branding.tenantName };
     const { html, text } = renderBrandedEmail(args.branding, {
+      lang: toHubTemplateLang(args.locale),
       title: args.subject,
       bodyHtml: textToHtmlParagraphs(args.body),
       bodyText: args.body,
       cta: args.webBaseUrl
-        ? { url: args.webBaseUrl, label: `Entrar a ${args.branding.tenantName}` }
+        ? {
+            url: args.webBaseUrl,
+            label: interpolate(resolveFixedEmailCopy('cta.hub_enter', args.locale), copyVars),
+          }
         : undefined,
-      footerNote: `Recibiste este correo como miembro de ${args.branding.tenantName}.`,
+      footerNote: interpolate(resolveFixedEmailCopy('footer.hub_member', args.locale), copyVars),
     });
 
     const result = await this.smtp.send(
@@ -253,6 +297,63 @@ export class PrismaNotificationHubService implements NotificationHubService {
     } else {
       await this.markFailed(args.notificationId, `smtp_send_failed:${result.error ?? 'unknown'}`);
     }
+  }
+
+  /**
+   * Idioma del destinatario para renderizar la notificación. `to` es siempre
+   * un userId, así que el idioma sale de `user.locale`.
+   *
+   * Los TRES caminos degradados terminan en `HUB_DEFAULT_LOCALE` de forma
+   * DELIBERADA — no por caída a un default implícito. Cada uno se loguea para
+   * que un self-hoster pueda verlos en vez de descubrirlos por el idioma del
+   * correo:
+   *
+   *  (a) El lookup falla o no hay fila (usuario borrado entre el evento y el
+   *      envío, o userId de otro tenant): no hay a quién preguntarle el idioma.
+   *  (b) La fila existe pero `locale` viene vacío: la columna tiene default en
+   *      BD, así que esto solo pasa si alguien la escribió a mano en blanco.
+   *  (c) El locale guardado no tiene catálogo (`pt-BR` es alcanzable HOY: lo
+   *      admite `ALLOWED_LOCALES` en me.controller.ts pero no está traducido).
+   *      No se resuelve aquí: se devuelve tal cual y lo absorbe
+   *      `resolveHubDefault`, que mapea a español. Así el override per-tenant
+   *      en `pt-BR` — si el tenant lo creó — todavía puede ganar.
+   */
+  private async resolveUserLocale(tenantId: string, userId: string): Promise<string> {
+    let user: { locale: string; tenantId: string } | null;
+    try {
+      user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { locale: true, tenantId: true },
+      });
+    } catch (err) {
+      // (a) el lookup falló — nunca rompe el envío.
+      this.logger.warn(
+        { userId, tenantId, err: (err as Error).message },
+        `NotificationHub: no se pudo leer el idioma del destinatario, se usa ${HUB_DEFAULT_LOCALE}`,
+      );
+      return HUB_DEFAULT_LOCALE;
+    }
+
+    // (a) sin fila o de otro tenant.
+    if (!user || user.tenantId !== tenantId) {
+      this.logger.warn(
+        { userId, tenantId },
+        `NotificationHub: destinatario desconocido en el tenant, se usa ${HUB_DEFAULT_LOCALE}`,
+      );
+      return HUB_DEFAULT_LOCALE;
+    }
+
+    // (b) fila con locale vacío.
+    const stored = typeof user.locale === 'string' ? user.locale.trim() : '';
+    if (!stored) {
+      this.logger.log(
+        { userId, tenantId },
+        `NotificationHub: el destinatario no tiene idioma, se usa ${HUB_DEFAULT_LOCALE}`,
+      );
+      return HUB_DEFAULT_LOCALE;
+    }
+
+    return stored;
   }
 
   private async resolveUserEmail(tenantId: string, userId: string): Promise<string | null> {
@@ -322,10 +423,10 @@ export class PrismaNotificationHubService implements NotificationHubService {
           tenantId_key_channel_locale: { tenantId, key, channel, locale },
         },
       })) ??
-      (locale !== 'es-ES'
+      (locale !== HUB_DEFAULT_LOCALE
         ? await this.prisma.notificationTemplate.findUnique({
             where: {
-              tenantId_key_channel_locale: { tenantId, key, channel, locale: 'es-ES' },
+              tenantId_key_channel_locale: { tenantId, key, channel, locale: HUB_DEFAULT_LOCALE },
             },
           })
         : null);
@@ -336,7 +437,7 @@ export class PrismaNotificationHubService implements NotificationHubService {
         body: interpolate(override.body, variables),
       };
     }
-    return renderTemplate(key, variables);
+    return renderTemplate(key, locale, variables);
   }
 }
 
@@ -348,8 +449,12 @@ interface RenderedTemplate {
 // Los defaults hardcoded del producto y la interpolación viven en el catálogo
 // compartido (email-template-catalog.ts) desde alpha.83: los emails
 // transaccionales usan la misma tabla de overrides y la misma sintaxis.
-function renderTemplate(key: string, variables: Record<string, unknown>): RenderedTemplate {
-  const template = HUB_TEMPLATE_DEFAULTS[key];
+function renderTemplate(
+  key: string,
+  locale: string,
+  variables: Record<string, unknown>,
+): RenderedTemplate {
+  const template = resolveHubDefault(key, locale);
   if (!template) {
     return {
       subject: key,

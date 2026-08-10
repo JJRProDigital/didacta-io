@@ -31,7 +31,10 @@ test.describe('Golden path del alumno', () => {
     await page.goto('/signin');
     await injectSession(page, {
       accessToken: scenario.alumno.accessToken,
-      user: scenario.alumno.user,
+      // Sin onboardingCompletedAt el alumno recién creado cae en el gate de
+      // onboarding obligatorio ("Completa tu perfil para empezar") — este
+      // spec no lo testea (eso lo cubre tests/onboarding.spec.ts).
+      user: { ...scenario.alumno.user, onboardingCompletedAt: new Date().toISOString() },
     });
 
     // 1) Catálogo
@@ -39,18 +42,39 @@ test.describe('Golden path del alumno', () => {
     await expect(page.getByRole('heading', { name: 'Catálogo' })).toBeVisible();
     await expect(page.getByText(scenario.course.title)).toBeVisible();
 
-    // 2) Detalle del curso + matrícula
+    // 2) Detalle del curso + matrícula por código de invitación (el botón
+    // "Matricularme" de matrícula libre fue eliminado globalmente, ver
+    // inscribe-by-api.spec.ts).
     await page.getByText(scenario.course.title).click();
     await expect(page).toHaveURL(new RegExp(`/cursos/${scenario.course.slug}$`));
-    await page.getByRole('button', { name: 'Matricularme' }).click();
+    await page.getByLabel(/código de invitación/i).fill(scenario.invitationCode);
 
-    // Esperar a que aparezca el panel de progreso (post-matrícula).
-    await expect(page.getByText('Tu progreso')).toBeVisible({ timeout: 15_000 });
+    // Sincronizamos contra la respuesta REAL del POST de canje, no contra un
+    // texto en pantalla ("Tu progreso"): investigado a fondo (sesión de
+    // retoma 2026-08-06, ver memoria "didacta-consistencia-eventual-me-enrollments")
+    // — `getByText('Tu progreso').toBeVisible()` podía resolver en falso
+    // positivo (~1/20 runs) ANTES de que el propio estado `enrollment` del
+    // componente se actualizara, dejando una ventana de milisegundos donde
+    // una llamada externa a GET /me/enrollments (fuera del navegador,
+    // network-only) corría en paralelo con el POST y lo veía vacío. No era
+    // consistencia eventual de Postgres/Prisma — confirmado con 2100+
+    // lecturas directas contra la API sin ni una sola anomalía.
+    const [byCodeResponse] = await Promise.all([
+      page.waitForResponse(
+        (res) => res.url().includes('/enrollments/by-code') && res.request().method() === 'POST',
+      ),
+      page.getByRole('button', { name: 'Canjear código' }).click(),
+    ]);
+    expect(byCodeResponse.ok(), 'POST /enrollments/by-code debe responder 2xx').toBe(true);
 
     // 3) Completar la lección vía API (replica lo que haría LessonPlayer al final del video).
+    // Ahora sí garantizado secuencial: el POST ya resolvió del lado servidor.
     const enrollments = await listEnrollments(scenario.alumno.accessToken);
     const ours = enrollments.find((e) => e.courseId === scenario.course.id);
     expect(ours, 'enrollment recién creada').toBeDefined();
+
+    // La UI también debería reflejarlo (panel de progreso post-matrícula).
+    await expect(page.getByText('Tu progreso')).toBeVisible({ timeout: 15_000 });
     const firstModule = scenario.course.modules[0];
     const firstLesson = firstModule?.lessons[0];
     expect(firstLesson, 'curso con al menos una lección').toBeDefined();

@@ -20,7 +20,7 @@ import { injectSession } from '../helpers/auth';
 // ── Auth real contra dev ───────────────────────────────────────────────────
 
 const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL ?? 'admin@didacta.io';
-const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? 'nJyLDGRncsWm637yJ9rJvGEw';
+const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? '';
 const TENANT_SLUG = process.env.E2E_TENANT_SLUG ?? 'didacta';
 const API_BASE = process.env.E2E_BASE_URL ?? 'https://dev.didacta.io';
 
@@ -75,9 +75,10 @@ test.describe('Sidebar — sección ESPACIOS', () => {
   test('la sección ESPACIOS es visible en el sidebar', async ({ page }) => {
     await withAdminSession(page, '/comunidad');
     const sidebar = page.locator('aside').first();
-    // El label del grupo es "Espacios" en el DOM (CSS text-transform:uppercase es solo visual).
-    // exact:true evita que coincida con otros elementos que contienen "Espacios" como substring.
-    await expect(sidebar.getByText('Espacios', { exact: true })).toBeVisible();
+    // El label del grupo es "Foros" en el DOM desde el bloque 9 de simplificación
+    // de navegación (`app/(app)/layout.tsx`); el CSS text-transform:uppercase es
+    // solo visual. exact:true evita coincidir con substrings de otros elementos.
+    await expect(sidebar.getByText('Foros', { exact: true })).toBeVisible();
   });
 
   test('el sidebar carga espacios reales de la BD (al menos 1 item en ESPACIOS)', async ({
@@ -85,9 +86,15 @@ test.describe('Sidebar — sección ESPACIOS', () => {
   }) => {
     await withAdminSession(page, '/comunidad');
     const sidebar = page.locator('aside').first();
-    // Esperar a que carguen los espacios (puede haber un flash de loading)
-    await page.waitForTimeout(1500);
-    // Debe haber al menos un link dentro de la sección ESPACIOS apuntando a /espacios/
+    // La sección arranca PLEGADA y sólo enseña el contador (botón "Foros N"),
+    // así que los enlaces no están en el DOM hasta desplegarla. Antes se
+    // esperaba 1,5 s a un "flash de loading" y se afirmaba sobre enlaces que
+    // ya no se pintan de entrada: el fallo no era de datos.
+    const toggle = sidebar.getByRole('button', { name: /^Foros/ });
+    await expect(toggle).toBeVisible({ timeout: 8000 });
+    await toggle.click();
+
+    // Debe haber al menos un link dentro de la sección apuntando a /espacios/
     const espaciosLinks = sidebar.locator('a[href^="/espacios/"]');
     await expect(espaciosLinks.first()).toBeVisible({ timeout: 8000 });
     const count = await espaciosLinks.count();
@@ -97,13 +104,13 @@ test.describe('Sidebar — sección ESPACIOS', () => {
   test('como alumno (rol) NO hay botón "+" junto a ESPACIOS', async ({ page }) => {
     await withAdminSession(page, '/comunidad', ['alumno']);
     const sidebar = page.locator('aside').first();
-    await expect(sidebar.getByRole('button', { name: /Añadir a Espacios/i })).not.toBeVisible();
+    await expect(sidebar.getByRole('button', { name: /Añadir a Foros/i })).not.toBeVisible();
   });
 
   test('como admin SÍ hay botón "+" junto a ESPACIOS', async ({ page }) => {
     await withAdminSession(page, '/comunidad');
     const sidebar = page.locator('aside').first();
-    await expect(sidebar.getByRole('button', { name: /Añadir a Espacios/i })).toBeVisible();
+    await expect(sidebar.getByRole('button', { name: /Añadir a Foros/i })).toBeVisible();
   });
 
   test('los items de ESPACIOS no muestran texto crudo de IconName (bug regresión)', async ({
@@ -120,9 +127,7 @@ test.describe('Sidebar — sección ESPACIOS', () => {
     }
   });
 
-  test('el sidebar NO muestra "1.240 miembros" hardcodeado (dato de cartón CLAUDE.md §3)', async ({
-    page,
-  }) => {
+  test('el sidebar NO muestra "1.240 miembros" hardcodeado (dato de cartón)', async ({ page }) => {
     await withAdminSession(page, '/comunidad');
     const sidebar = page.locator('aside').first();
     await expect(sidebar.getByText('1.240 miembros')).not.toBeVisible();
@@ -134,7 +139,7 @@ test.describe('Sidebar — sección ESPACIOS', () => {
 test.describe('CreateSpaceModal — modal de creación de espacio', () => {
   test.beforeEach(async ({ page }) => {
     await withAdminSession(page, '/comunidad');
-    await page.getByRole('button', { name: /Añadir a Espacios/i }).click();
+    await page.getByRole('button', { name: /Añadir a Foros/i }).click();
     await expect(page.getByRole('dialog', { name: 'Nuevo espacio' })).toBeVisible();
   });
 
@@ -242,8 +247,15 @@ test.describe('Página /espacios/[space]', () => {
   test('el compositor se abre al pulsar "Nueva publicación"', async ({ page }) => {
     await withAdminSession(page, '/espacios/general');
     await page.getByRole('button', { name: 'Nueva publicación' }).click();
-    // El modal PostComposerModal debe aparecer
-    await expect(page.locator('[role="dialog"]').first()).toBeVisible({ timeout: 5000 });
+    // El modal PostComposerModal debe aparecer. Se busca POR NOMBRE, no con
+    // `[role="dialog"]`.first(): el drawer de navegación móvil es también un
+    // `role="dialog"` (aria-label "Menú de navegación") y, aunque esté cerrado,
+    // aparece antes en el DOM — `.first()` resolvía a él y la aserción moría
+    // con "unexpected value hidden". Es el mismo patrón que ya usa el resto
+    // del fichero para el modal "Nuevo espacio".
+    await expect(page.getByRole('dialog', { name: 'Nueva publicación' })).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test('el selector de ordenación tiene las 3 opciones', async ({ page }) => {
@@ -357,10 +369,8 @@ test.describe('Consistencia visual y rutas', () => {
 
   test('la sección ESPACIOS en el sidebar tiene el label en mayúsculas (CSS)', async ({ page }) => {
     await withAdminSession(page, '/comunidad');
-    // El DOM tiene "Espacios"; la clase CSS "uppercase" lo hace aparecer en mayúsculas visualmente.
-    await expect(
-      page.locator('aside').first().getByText('Espacios', { exact: true }),
-    ).toBeVisible();
+    // El DOM tiene "Foros"; la clase CSS "uppercase" lo hace aparecer en mayúsculas visualmente.
+    await expect(page.locator('aside').first().getByText('Foros', { exact: true })).toBeVisible();
   });
 
   test('/comunidad no da error 500', async ({ page }) => {

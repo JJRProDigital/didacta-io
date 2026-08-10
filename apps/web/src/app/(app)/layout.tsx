@@ -6,7 +6,8 @@
  */
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { AppSidebar, type SidebarGroup } from '@/components/app-sidebar';
 import { CommandPalette } from '@/components/command-palette';
 import { Icon } from '@/components/icon';
@@ -19,6 +20,7 @@ import { FloatingChat, MessagingProvider } from '@/modules/messaging';
 import { authStorage, type StoredSession } from '@/lib/auth-storage';
 import { clearIntendedPath, rememberIntendedPath } from '@/lib/post-login-redirect';
 import { meApi } from '@/lib/me';
+import { labelOr } from '@/lib/i18n/labels';
 import { formatTenantName } from '@/lib/tenant-name';
 import { useTenantContext } from '@/lib/tenant-context';
 import { mergeExtensionSidebarItems } from '@/lib/sidebar-extensions-merge';
@@ -162,6 +164,10 @@ function Shell({
   children: ReactNode;
 }) {
   const pathname = usePathname();
+  // Copy del propio shell (hamburguesa móvil + nombres de sección del
+  // `<title>`). Vivía en `alumnoSocial.shell.*` por un reparto accidental de la
+  // migración i18n: no es copy del área de alumno.
+  const t = useTranslations('shell');
 
   const isAdminOrFormador = session.user.roles.some((r) =>
     ['super_admin', 'tenant_admin', 'formador'].includes(r),
@@ -296,7 +302,29 @@ function Shell({
   // con fallback al slug title-cased.
   const { tenant: hostTenant } = useTenantContext();
   const tenantName = hostTenant?.name?.trim() || formatTenantName(session.user.tenantSlug);
-  const sectionLabel = resolveSectionLabel(mergedGroups, pathname ?? '');
+  const sectionExtras = useMemo(
+    () => [
+      { href: '/cuenta', label: t('sections.myProfile') },
+      // /grupos ya no tiene item en el sidebar (bloque 9) pero la ruta sigue viva.
+      { href: '/grupos', label: t('sections.groups') },
+      // Ídem /rutas: item del alumno retirado del menú, la página sigue accesible
+      // por URL y desde el detalle de una ruta.
+      { href: '/rutas', label: t('sections.learningPaths') },
+    ],
+    [t],
+  );
+  // Los `label` del sidebar son TOKENS canónicos en español (ver SidebarContent):
+  // sin resolverlos, con la UI en inglés el `<title>` del navegador mezclaría
+  // idiomas. `labelOr` degrada al token crudo si no hay traducción. Los extras
+  // de arriba ya llegan traducidos por `t`, así que se emiten tal cual (pasarlos
+  // por `labelOr` buscaría una key `nav.items.<texto ya traducido>` que no existe).
+  const tNav = useTranslations('nav');
+  const sectionMatch = resolveSectionLabel(mergedGroups, pathname ?? '', sectionExtras);
+  const sectionLabel = sectionMatch
+    ? sectionMatch.fromExtras
+      ? sectionMatch.label
+      : labelOr(tNav, `items.${sectionMatch.label}`, sectionMatch.label)
+    : null;
   useEffect(() => {
     const parts = [sectionLabel, tenantName, 'Didacta'].filter((p): p is string => Boolean(p));
     document.title = parts.join(' | ');
@@ -335,7 +363,7 @@ function Shell({
               <button
                 type="button"
                 onClick={() => setMobileNavOpen(true)}
-                aria-label="Abrir menú de navegación"
+                aria-label={t('openMenu')}
                 aria-expanded={mobileNavOpen}
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border bg-surface text-text-muted transition-colors hover:border-border-strong hover:text-text lg:hidden"
               >
@@ -357,7 +385,17 @@ function Shell({
               <NotificationsBell />
             </header>
 
-            <main className="flex-1 px-4 py-5 pb-24 sm:px-6 lg:px-8 lg:py-6 lg:pb-6">
+            {/* pb-24 en todos los breakpoints (no solo móvil): dejamos hueco bajo
+                el contenido igual de alto que la píldora fija del chat flotante
+                (abajo a la derecha, ver FloatingChat) para que, al hacer scroll
+                hasta el final de una página larga, ningún botón (p.ej. "Guardar")
+                termine geométricamente debajo de la píldora — solapamiento real
+                detectado en /admin/branding y el constructor de cursos.
+                OJO: `lg:py-6` (shorthand) también fija padding-bottom y pisaba a
+                `pb-24` en ese breakpoint porque los prefijos responsive cascadean
+                después de las utilidades sin prefijo — por eso aquí es `lg:pt-6`
+                (solo top), nunca `lg:py-*` ni `lg:pb-*`. */}
+            <main className="flex-1 px-4 py-5 pb-24 sm:px-6 lg:px-8 lg:pt-6">
               <div className="mx-auto max-w-[1280px]">{children}</div>
             </main>
           </div>
@@ -373,44 +411,47 @@ function Shell({
 }
 
 /**
- * Rutas del shell que NO tienen item en el sidebar pero merecen un nombre de
- * sección en el `<title>` (se acceden desde el menú de perfil, banners, etc.).
- */
-const SECTION_TITLE_EXTRAS: ReadonlyArray<{ href: string; label: string }> = [
-  { href: '/cuenta', label: 'Mi perfil' },
-  // /grupos ya no tiene item en el sidebar (bloque 9) pero la ruta sigue viva.
-  { href: '/grupos', label: 'Grupos' },
-  // Ídem /rutas: item del alumno retirado del menú, la página sigue accesible
-  // por URL y desde el detalle de una ruta.
-  { href: '/rutas', label: 'Rutas de aprendizaje' },
-];
-
-/**
  * Deriva el label de la sección actual a partir del pathname, reutilizando el
- * mapa ruta→label del sidebar (más SECTION_TITLE_EXTRAS). Match por prefijo más
- * largo (la ruta más específica gana); respeta `exactMatch`. Devuelve null si
- * ninguna ruta coincide (el `<title>` cae a "Tenant | Didacta").
+ * mapa ruta→label del sidebar (más `extras`: rutas sin item de menú que igual
+ * merecen nombre en el `<title>`, ya traducidas por quien llama). Match por
+ * prefijo más largo (la ruta más específica gana); respeta `exactMatch`.
+ * Devuelve null si ninguna ruta coincide (el `<title>` cae a "Tenant | Didacta").
+ *
+ * `fromExtras` distingue el origen del label: los del sidebar son tokens
+ * canónicos en español que el llamante aún tiene que pasar por `labelOr`; los
+ * de `extras` ya vienen traducidos y se emiten tal cual.
  */
-function resolveSectionLabel(groups: SidebarGroup[], pathname: string): string | null {
+function resolveSectionLabel(
+  groups: SidebarGroup[],
+  pathname: string,
+  extras: ReadonlyArray<{ href: string; label: string }>,
+): { label: string; fromExtras: boolean } | null {
   if (!pathname) return null;
-  const candidates: Array<{ href: string; label: string; exact?: boolean }> = [];
+  const candidates: Array<{
+    href: string;
+    label: string;
+    exact?: boolean;
+    fromExtras?: boolean;
+  }> = [];
   for (const g of groups) {
     for (const it of g.items) {
       if (it.href) candidates.push({ href: it.href, label: it.label, exact: it.exactMatch });
     }
   }
-  candidates.push(...SECTION_TITLE_EXTRAS);
+  for (const e of extras) {
+    candidates.push({ href: e.href, label: e.label, fromExtras: true });
+  }
 
-  let best: { href: string; label: string } | null = null;
+  let best: { href: string; label: string; fromExtras: boolean } | null = null;
   for (const c of candidates) {
     const match = c.exact
       ? pathname === c.href
       : pathname === c.href || pathname.startsWith(`${c.href}/`);
     if (match && (!best || c.href.length > best.href.length)) {
-      best = { href: c.href, label: c.label };
+      best = { href: c.href, label: c.label, fromExtras: c.fromExtras ?? false };
     }
   }
-  return best?.label ?? null;
+  return best ? { label: best.label, fromExtras: best.fromExtras } : null;
 }
 
 // `buildGroups` y `buildAdminGroups` viven ahora en `@/lib/sidebar-nav` — son

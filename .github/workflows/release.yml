@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Resolve version from tag
         id: version
@@ -65,7 +65,7 @@ jobs:
           BASE="${VERSION%%-*}"
           echo "base=${BASE}" >> $GITHUB_OUTPUT
 
-          # Componer tags Docker según política versionado (docs/versioning.md)
+          # Componer tags Docker según la política de versionado
           TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}"
           if [[ "${VERSION}" =~ -alpha\.[0-9]+$ ]]; then
             # ej. 0.0.1-alpha.0 → además exporta tag :0.0.1-alpha y :alpha
@@ -93,21 +93,26 @@ jobs:
           echo "${TAGS}" | tr ',' '\n'
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
           tags: ${{ steps.version.outputs.tags }}
+          # Sin esto el stage `runner` recibe DIDACTA_VERSION vacío y hornea el
+          # default fósil de DIDACTA_CORE_VERSION — la versión que reportan
+          # /healthz, la telemetría y el gate de compatibilidad del marketplace.
+          build-args: |
+            DIDACTA_VERSION=${{ steps.version.outputs.version }}
           labels: |
             org.opencontainers.image.title=Didacta Community
             org.opencontainers.image.description=Source-available LMS by VA360 LABS
@@ -132,12 +137,12 @@ jobs:
       #      cómputo de tags del paso "Resolve version from tag".
       # ────────────────────────────────────────────────────────────────────
       # - name: Login to Docker Hub
-      #   uses: docker/login-action@v3
+      #   uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
       #   with:
       #     username: ${{ secrets.DOCKERHUB_USERNAME }}
       #     password: ${{ secrets.DOCKERHUB_TOKEN }}
       # - name: Mirror image to Docker Hub
-      #   uses: docker/build-push-action@v6
+      #   uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
       #   with:
       #     context: .
       #     push: true
@@ -146,7 +151,7 @@ jobs:
 
       - name: Create GitHub Release
         if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
@@ -165,10 +170,6 @@ jobs:
             docker compose -f docker-compose.alpha.yml up -d
             ```
 
-            Ver `docs/alpha/INSTALL.md` para guía paso a paso.
-
-            ### Política de versiones
-
-            Ver [`docs/versioning.md`](https://github.com/${{ github.repository }}/blob/main/docs/versioning.md).
+            Guía de instalación paso a paso y política de versiones: <https://docs.didacta.io/instalacion/>.
 
             ${{ steps.version.outputs.is_prerelease == 'true' && '⚠️ **Esta es una pre-release**. No usar en producción con datos reales.' || '' }}

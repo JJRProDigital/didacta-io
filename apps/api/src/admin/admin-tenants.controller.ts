@@ -54,7 +54,10 @@ type DomainDto = z.infer<typeof domainSchema>;
 function requireSuperAdmin(user: SessionClaims | undefined): SessionClaims {
   if (!user) throw new UnauthorizedException();
   if (!user.roles.includes('super_admin')) {
-    throw new ForbiddenException('Esta acción requiere rol super_admin.');
+    throw new ForbiddenException({
+      message: 'Esta acción requiere rol super_admin.',
+      code: 'ADMIN_FORBIDDEN_SUPER_ADMIN_REQUIRED',
+    });
   }
   return user;
 }
@@ -101,6 +104,9 @@ export class AdminTenantsController {
     @Body(new ZodValidationPipe(createTenantSchema)) dto: CreateTenantDto,
   ) {
     const u = requireSuperAdmin(user);
+    // Sin escalón TenantDomain: el tenant que se está creando aún no tiene
+    // fila en esa tabla (se crea DENTRO de service.create). Cascada normal:
+    // env → Host del request → localhost.
     const webBaseUrl = resolveWebBaseUrl(req);
     return this.service.create(u.sub, dto, webBaseUrl, extractClientContext(req));
   }

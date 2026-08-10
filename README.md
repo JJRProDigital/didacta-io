@@ -2,7 +2,7 @@
 
 > 📚 **El LMS de nueva generación. Fair-code, modular y listo para Fundae.**
 
-[![Docker](https://img.shields.io/badge/docker-hub-blue)](https://hub.docker.com/r/didactaio/community)
+[![Docker](https://img.shields.io/badge/ghcr-didacta--community-blue)](https://github.com/va360labs/didacta-io/pkgs/container/didacta-community)
 [![License](https://img.shields.io/badge/license-Sustainable%20Use%201.0-orange)](LICENSE)
 [![Versioning](https://img.shields.io/badge/versioning-SemVer-green)](https://semver.org)
 ![Stage](https://img.shields.io/badge/stage-alpha-red)
@@ -13,16 +13,17 @@
 🚧 **Alpha** — entre mayo y julio de 2026 el producto maduró sirviendo en
 producción real a su primer despliegue (congelado en el tag
 `v0.0.1-alpha.88-va360`); desde el 31 de julio de 2026 el repo vuelve a ser el
-producto whitelabel y prepara su primera versión pública. Guías:
-[instalación](docs/INSTALL.md) · [actualización](docs/UPGRADE.md).
+producto whitelabel y prepara su primera versión pública. Guías de
+instalación, actualización y versionado en la documentación oficial:
+[docs.didacta.io](https://docs.didacta.io).
 
-Imagen oficial publicada en Docker Hub: [`didactaio/community`](https://hub.docker.com/r/didactaio/community). **Pública** — no requiere `docker login`.
+Imagen oficial publicada en GitHub Container Registry: `ghcr.io/va360labs/didacta-community`. **Pública** — no requiere `docker login`. El espejo en [Docker Hub](https://hub.docker.com/r/didactaio/community) (`didactaio/community`) todavía no está activo.
 
 ## Verificar acceso a la imagen
 
 ```bash
-# Fija SIEMPRE una versión concreta (tags en Docker Hub); no hay tag `latest`.
-docker pull didactaio/community:<versión>
+# Fija SIEMPRE una versión concreta; no hay tag `latest`.
+docker pull ghcr.io/va360labs/didacta-community:<versión>
 ```
 
 Si se descarga sin pedir credenciales, ya puedes seguir cualquiera de los dos caminos de despliegue descritos abajo.
@@ -69,7 +70,12 @@ docker compose -f docker-compose.alpha.yml up -d
 # 6. Esperar healthchecks (~60-90s la primera vez)
 docker compose -f docker-compose.alpha.yml ps
 
-# 7. Abrir
+# 7. Copiar el token de setup de un solo uso (obligatorio para crear la
+#    cuenta admin — sin él /setup/init responde 403). Deja de valer en
+#    cuanto termine el asistente o el contenedor se reinicie sin terminarlo.
+docker compose -f docker-compose.alpha.yml logs didacta | grep "Setup token"
+
+# 8. Abrir (usa la URL /setup?token=... que imprimió el paso anterior)
 # http://localhost:3000             — Web
 # http://localhost:4000/api/docs    — Swagger
 # http://localhost:4000/healthz     — health probe
@@ -104,7 +110,7 @@ Después, descomenta las líneas `S3_*` en `docker-compose.alpha.yml`, dentro de
 
 Para producción real, apunta a tu Hetzner Object Storage, AWS S3 u otro proveedor compatible configurando las variables `S3_*` en `.env`.
 
-El quickstart de esta página es, por ahora, el manual de instalación de referencia. Para dudas, bugs o feedback, abre una issue en GitHub — hay plantillas de bug, feedback y feature request. Para vulnerabilidades de seguridad, sigue [`SECURITY.md`](SECURITY.md).
+El quickstart de esta página cubre el arranque; el manual completo de instalación, actualización y operación vive en [docs.didacta.io](https://docs.didacta.io). Para dudas, bugs o feedback, abre una issue en GitHub — hay plantillas de bug, feedback y feature request. Para vulnerabilidades de seguridad, sigue [`SECURITY.md`](SECURITY.md).
 
 ## Camino B — Docker pull + run manual
 
@@ -117,7 +123,7 @@ Para operadores que ya tienen Postgres 16 + Redis 7 administrados y solo quieren
 - Las 3 variables de entorno obligatorias listadas arriba.
 
 ```bash
-docker pull didactaio/community:0.0.1-alpha.99
+docker pull ghcr.io/va360labs/didacta-community:0.0.1-alpha.101
 
 # Crear volumen para uploads + clave de cifrado autogenerada.
 # El volumen sobrevive a reinicios.
@@ -135,7 +141,7 @@ docker run -d \
   -e STORAGE_ROOT=/app/data/storage \
   -e NODE_ENV=production \
   --restart unless-stopped \
-  didactaio/community:0.0.1-alpha.99
+  ghcr.io/va360labs/didacta-community:0.0.1-alpha.101
 ```
 
 > El volumen `didacta_data` guarda los archivos subidos —cursos, certificados y evidencias— **y** una clave de cifrado autogenerada en el primer arranque para los secretos at-rest. Sin ese volumen montado, todo se borra al recrear el contenedor.
@@ -147,6 +153,7 @@ docker run -d \
 ```bash
 docker logs -f didacta-app                  # ver bootstrap + migraciones Prisma
 curl -fsS http://localhost:4000/healthz     # debe responder 200
+docker logs didacta-app | grep "Setup token"  # token de un solo uso para /setup?token=...
 ```
 
 **Variables opcionales útiles** — conjunto completo en [`.env.example`](.env.example):
@@ -224,9 +231,10 @@ Aparte existe un **registro opt-in** voluntario (Administración → Registro) d
 
 ## Documentación
 
+- 📚 [docs.didacta.io](https://docs.didacta.io) — Documentación oficial (es/en): instalación, actualización, operación y versionado.
 - 🤝 [`CONTRIBUTING.md`](CONTRIBUTING.md) — Guía de contribución.
 - 🔒 [`SECURITY.md`](SECURITY.md) — Política de seguridad y reporte responsable.
-- 📋 [`CHANGELOG.md`](CHANGELOG.md) — Historial de cambios.
+- 📋 [Releases](https://github.com/va360labs/didacta-io/releases) — Historial de cambios de cada versión publicada.
 - 📜 [`LICENSE_NOTICE.md`](LICENSE_NOTICE.md) — Resumen humano del modelo de licencias.
 - 🧭 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) — Código de conducta.
 - 🐛 Bugs y feedback — issues de GitHub (plantillas de bug, feedback y feature request).

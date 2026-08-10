@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Didacta License SDK — verifies signed JWTs (ES256) for Enterprise capabilities and integrates with the opt-in registry",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -22,9 +23,9 @@
     "src/public-keys"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"require('fs').cpSync('src/public-keys','dist/public-keys',{recursive:true})\"",
     "dev": "tsc -p tsconfig.json --watch",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.tests.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist .turbo"
@@ -61,6 +62,6 @@
     "react": "^19.0.0",
     "reflect-metadata": "^0.2.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.7"
   }
 }

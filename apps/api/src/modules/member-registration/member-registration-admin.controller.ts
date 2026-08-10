@@ -27,13 +27,13 @@ import { CurrentUser } from '../../auth/decorators';
 import { JwtAuthGuard } from '../../auth/jwt-auth.guard';
 import { ZodValidationPipe } from '../../auth/zod-validation.pipe';
 import type { SessionClaims } from '../../auth/token.service';
-import { resolveWebBaseUrl } from '../../common/resolve-web-base-url';
 import { renewalEmailHtml } from '../../common/renewal-email-html';
 import { resolveEmailBranding, type BrandingPrisma } from '../../common/branded-email';
 import { ModuleRegistryService } from '../module-registry.service';
 import { SmtpAdapterService } from '../smtp-adapter.service';
 import { TenantSmtpResolverService } from '../tenant-smtp-resolver.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TenantResolverService } from '../../tenancy/tenant-resolver.service';
 import { MemberDecisionService } from './member-decision.service';
 import { MemberRegistrationService } from './member-registration.service';
 import { MemberSubscriptionLookupService } from './member-subscription-lookup.service';
@@ -78,7 +78,10 @@ const uuidSchema = z.string().uuid();
  */
 function ensureUuid(id: string): string {
   if (!uuidSchema.safeParse(id).success) {
-    throw new NotFoundException('Solicitante no encontrado.');
+    throw new NotFoundException({
+      message: 'Solicitante no encontrado.',
+      code: 'MEMBER_REG_APPLICANT_NOT_FOUND',
+    });
   }
   return id;
 }
@@ -90,6 +93,14 @@ function ensureUuid(id: string): string {
  * re-lanzar el lookup (p.ej. tras conectar una cuenta o si dio ERROR).
  */
 const ADMIN_ROLES = new Set(['super_admin', 'tenant_admin']);
+
+/**
+ * Relleno del `message` cuando el MTA rechaza el envío SIN devolver texto.
+ * En ese caso NO se manda `detail`: el front detecta su ausencia y pinta el
+ * `message` crudo en vez de una frase traducida con el hueco vacío. Mismo
+ * criterio que `SMTP_NO_DETAIL` en `admin/admin-smtp.controller.ts`.
+ */
+const EMAIL_SEND_NO_DETAIL = 'error SMTP';
 
 @ApiTags('Inscripción de miembros · Admin')
 @ApiBearerAuth()
@@ -104,14 +115,16 @@ export class MemberRegistrationAdminController {
     private readonly smtp: SmtpAdapterService,
     private readonly smtpResolver: TenantSmtpResolverService,
     private readonly prisma: PrismaService,
+    private readonly tenantResolver: TenantResolverService,
   ) {}
 
   private requireAdmin(user: SessionClaims | undefined): SessionClaims {
     if (!user) throw new UnauthorizedException();
     if (!user.roles.some((r) => ADMIN_ROLES.has(r))) {
-      throw new ForbiddenException(
-        'Solo administradores pueden ver las solicitudes de inscripción.',
-      );
+      throw new ForbiddenException({
+        message: 'Solo administradores pueden ver las solicitudes de inscripción.',
+        code: 'MEMBER_REG_ADMIN_ONLY',
+      });
     }
     return user;
   }
@@ -140,7 +153,7 @@ export class MemberRegistrationAdminController {
   ) {
     const user = this.requireAdmin(rawUser);
     const ctx = extractClientContext(req);
-    const webBaseUrl = resolveWebBaseUrl(req);
+    const webBaseUrl = await this.tenantResolver.resolveTenantWebBaseUrl(user.tenantId, req);
     const input = {
       name: dto.name,
       email: dto.email,
@@ -196,7 +209,11 @@ export class MemberRegistrationAdminController {
     const user = this.requireAdmin(rawUser);
     ensureUuid(userId);
     const account = await this.registration.getUserEmail(user.tenantId, userId);
-    if (!account) throw new NotFoundException('Solicitante no encontrado.');
+    if (!account)
+      throw new NotFoundException({
+        message: 'Solicitante no encontrado.',
+        code: 'MEMBER_REG_APPLICANT_NOT_FOUND',
+      });
     // Prioridad: email mapeado ahora → el que ya se usó antes (persiste el mapeo) → el de registro.
     const existing = await this.lookup.getForUser(user.tenantId, userId);
     const emailToUse = body.email ?? existing?.email ?? account;
@@ -223,7 +240,10 @@ export class MemberRegistrationAdminController {
     const action = dto.action === 'approve' ? 'APPROVE' : 'REJECT';
     const result = await this.decision.decideByAdmin(user.tenantId, userId, action, ctx);
     if (result.outcome === 'invalid') {
-      throw new NotFoundException('Solicitante no encontrado.');
+      throw new NotFoundException({
+        message: 'Solicitante no encontrado.',
+        code: 'MEMBER_REG_APPLICANT_NOT_FOUND',
+      });
     }
     return { outcome: result.outcome };
   }
@@ -276,12 +296,17 @@ export class MemberRegistrationAdminController {
     const user = this.requireAdmin(rawUser);
     ensureUuid(userId);
     const to = (await this.registration.getUserEmail(user.tenantId, userId))?.trim();
-    if (!to) throw new NotFoundException('Solicitante no encontrado o sin email.');
+    if (!to)
+      throw new NotFoundException({
+        message: 'Solicitante no encontrado o sin email.',
+        code: 'MEMBER_REG_APPLICANT_EMAIL_MISSING',
+      });
     const resolved = await this.smtpResolver.resolve(user.tenantId);
     if (!resolved) {
-      throw new ConflictException(
-        'El tenant no tiene SMTP configurado: no se puede enviar el recordatorio.',
-      );
+      throw new ConflictException({
+        message: 'El tenant no tiene SMTP configurado: no se puede enviar el recordatorio.',
+        code: 'MEMBER_REG_SMTP_NOT_CONFIGURED',
+      });
     }
     const branding = await resolveEmailBranding(
       this.prisma as unknown as BrandingPrisma,
@@ -299,7 +324,15 @@ export class MemberRegistrationAdminController {
       branding.tenantName,
     );
     if (!result.ok) {
-      throw new ConflictException(`No se pudo enviar el email: ${result.error ?? 'error SMTP'}`);
+      throw new ConflictException({
+        // El error del MTA es lo que le dice al admin si el buzón no existe,
+        // si la cuenta rebotó o si el relay lo bloqueó. Va aparte del
+        // `message` para que el front lo enmarque en su idioma sin borrarlo
+        // (ver `CODES_WITH_DETAIL` en apps/web/src/lib/i18n/api-error.ts).
+        message: `No se pudo enviar el email: ${result.error ?? EMAIL_SEND_NO_DETAIL}`,
+        code: 'MEMBER_REG_EMAIL_SEND_FAILED',
+        ...(result.error ? { detail: result.error } : {}),
+      });
     }
     return { ok: true, to };
   }
@@ -318,7 +351,10 @@ export class MemberRegistrationAdminController {
     const results = (row?.results ?? []) as unknown as MemberSubscriptionMatch[];
     const match = results.find((m) => m.subscriptionId === subscriptionId);
     if (!match) {
-      throw new NotFoundException('Suscripción no encontrada en el lookup de la solicitud.');
+      throw new NotFoundException({
+        message: 'Suscripción no encontrada en el lookup de la solicitud.',
+        code: 'MEMBER_REG_SUBSCRIPTION_NOT_FOUND',
+      });
     }
     return match;
   }

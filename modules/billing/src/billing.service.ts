@@ -8,7 +8,13 @@
  *
  * Diseño:
  *  - Stateless: toda persistencia vive en Prisma (3 tablas mod_billing_*).
- *  - Stripe se inyecta vía StripeAdapter (mockeable en tests).
+ *  - Stripe se resuelve POR LLAMADA vía `stripeFor(tenantId)` (no un
+ *    StripeAdapter fijo al construir): cada tenant puede tener su propia
+ *    cuenta de Stripe, configurada desde Administración → Pagos. El host
+ *    (`module-registry.service.ts`) cablea `stripeFor` para que caiga al
+ *    adapter global de instancia si el tenant no configuró el suyo — mismo
+ *    patrón de cascada que `TenantSmtpResolverService`. Mockeable en tests
+ *    con un resolver que siempre devuelve el mismo stub.
  *  - Eventos de dominio se emiten a través de un publisher inyectado: el
  *    contrato del CORE expone EventBus para módulos. El factory los cablea.
  *  - Idempotencia del webhook: `mod_billing_webhook_event` con PK natural
@@ -33,6 +39,9 @@ import {
   StripeApiError,
 } from './errors.js';
 import type { StripeAdapter } from './stripe.client.js';
+
+/** Resuelve el StripeAdapter a usar para un tenant concreto, por llamada. */
+export type StripeAdapterResolver = (tenantId: string) => Promise<StripeAdapter>;
 
 /**
  * Inferimos los tipos de las filas del schema directamente del cliente
@@ -110,6 +119,13 @@ export interface StartCheckoutInput {
    */
   successUrl?: string;
   cancelUrl?: string;
+  /**
+   * Idioma activo de la UI del comprador. Viaja opaco en la metadata de la
+   * session y vuelve en el webhook, que es lo único que sobrevive al salto a
+   * Stripe: en el checkout PÚBLICO la fila de `user` no existe todavía. Este
+   * módulo NO lo interpreta ni lo valida — lo hace el host.
+   */
+  locale?: string;
 }
 
 /** Una opción de compra del curso, tal y como la ve el alumno. */
@@ -146,6 +162,12 @@ export type BillingUserProvisioner = (args: {
   tenantId: string;
   email: string;
   name: string | null;
+  /**
+   * Idioma con el que el comprador estaba navegando al pagar, capturado en
+   * `startCheckout` y transportado en la metadata de la sesión. Opaco para este
+   * módulo: lo valida y lo persiste el host, y SOLO si crea la fila.
+   */
+  locale?: string;
 }) => Promise<{ userId: string; created: boolean }>;
 
 /**
@@ -161,7 +183,7 @@ const EVENT = {
 export class BillingService {
   constructor(
     private readonly prisma: PrismaClient,
-    private readonly stripe: StripeAdapter,
+    private readonly stripeFor: StripeAdapterResolver,
     private readonly publisher: BillingEventPublisher,
     private readonly urls: CheckoutUrlBuilder,
   ) {}
@@ -259,10 +281,11 @@ export class BillingService {
     // Dos vías: (a) el admin pega un price_ ya creado en Stripe, o (b) escribe
     // un importe y lo creamos nosotros. Cacheamos unit_amount y currency para
     // evitar lookup en el catálogo público (apps/web/cursos/[slug]).
+    const stripe = await this.stripeFor(input.tenantId);
     let price;
     if (input.stripePriceId) {
       // Si el priceId no existe o está inactivo, fallamos antes de crear el row.
-      price = await this.stripe.retrievePrice(input.stripePriceId);
+      price = await stripe.retrievePrice(input.stripePriceId);
       if (!price.active) {
         throw new StripeApiError(
           `El price ${input.stripePriceId} está inactivo en Stripe. Activa el price o usa otro.`,
@@ -272,7 +295,7 @@ export class BillingService {
       if (input.unitAmount === undefined || input.unitAmount <= 0) {
         throw new StripeApiError('Indica un importe mayor que cero o un stripePriceId existente.');
       }
-      price = await this.stripe.createOneOffPrice({
+      price = await stripe.createOneOffPrice({
         name: input.name?.trim() || 'Curso',
         unitAmount: input.unitAmount,
         currency: (input.currency ?? 'eur').toLowerCase(),
@@ -387,7 +410,8 @@ export class BillingService {
     let stripePriceId = existente.stripePriceId;
     let stripeProductId = existente.stripeProductId;
     if (!mismoImporte) {
-      const price = await this.stripe.createOneOffPrice({
+      const stripe = await this.stripeFor(input.tenantId);
+      const price = await stripe.createOneOffPrice({
         name: input.name?.trim() || 'Curso',
         productId: existente.stripeProductId,
         unitAmount: input.unitAmount,
@@ -431,7 +455,8 @@ export class BillingService {
       data.active = input.patch.active;
     }
     if (input.patch.stripePriceId && input.patch.stripePriceId !== product.stripePriceId) {
-      const price = await this.stripe.retrievePrice(input.patch.stripePriceId);
+      const stripe = await this.stripeFor(input.tenantId);
+      const price = await stripe.retrievePrice(input.patch.stripePriceId);
       if (!price.active) {
         throw new StripeApiError(`El price ${input.patch.stripePriceId} está inactivo en Stripe.`);
       }
@@ -496,7 +521,8 @@ export class BillingService {
 
     let session;
     try {
-      session = await this.stripe.createCheckoutSession({
+      const stripe = await this.stripeFor(input.tenantId);
+      session = await stripe.createCheckoutSession({
         priceId: product.stripePriceId,
         successUrl: input.successUrl ?? this.urls.successUrl(input.courseId),
         cancelUrl: input.cancelUrl ?? this.urls.cancelUrl(input.courseId),
@@ -509,6 +535,7 @@ export class BillingService {
           // Sin userId en el checkout anónimo: la fila de la order (no la
           // metadata) es la fuente de verdad del comprador en el fulfillment.
           ...(input.userId ? { userId: input.userId } : {}),
+          ...(input.locale ? { locale: input.locale } : {}),
         },
       });
     } catch (err) {
@@ -716,6 +743,10 @@ export class BillingService {
         tenantId,
         email: email.trim().toLowerCase(),
         name: session.customer_details?.name ?? null,
+        // Idioma con el que compró (lo escribió `startCheckout`). Va sin validar
+        // a propósito: quien escribe la fila de `user` es el host y es él quien
+        // decide qué locales acepta.
+        locale: metadata.locale,
       });
       userId = provisioned.userId;
       userCreated = provisioned.created;

@@ -19,6 +19,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { TokenService, type SessionClaims } from '../auth/token.service';
 import { TenantContextService } from '../tenancy/tenant-context.service';
 import { runAsTenant } from '../tenancy/tenant-context.storage';
+import { TenantResolverService } from '../tenancy/tenant-resolver.service';
 import { ModuleContextFactory } from '../modules/module-context.factory';
 import { ModuleRegistryService } from '../modules/module-registry.service';
 import {
@@ -85,6 +86,7 @@ export class ModulesDispatcherController {
     private readonly moduleRegistry: ModuleRegistryService,
     private readonly contextFactory: ModuleContextFactory,
     private readonly tenantContext: TenantContextService,
+    private readonly tenantResolver: TenantResolverService,
   ) {}
 
   /// Atrapa todos los métodos bajo `/modules/*`. NestJS no soporta
@@ -104,7 +106,10 @@ export class ModulesDispatcherController {
     const method = (req.method ?? '').toUpperCase();
     if (!ALLOWED_METHODS.includes(method as AllowedMethod)) {
       throw new HttpException(
-        'Método no soportado por el dispatcher',
+        {
+          message: 'Método no soportado por el dispatcher',
+          code: 'MARKETPLACE_DISPATCHER_METHOD_NOT_ALLOWED',
+        },
         HttpStatus.METHOD_NOT_ALLOWED,
       );
     }
@@ -123,7 +128,13 @@ export class ModulesDispatcherController {
 
     const matched = this.router.match(method, stripped);
     if (!matched) {
-      throw new NotFoundException(`No hay módulo registrado para ${method} ${stripped}`);
+      throw new NotFoundException({
+        message: `No hay módulo registrado para ${method} ${stripped}`,
+        code: 'MARKETPLACE_DISPATCHER_ROUTE_NOT_FOUND',
+        // Verbo y ruta van juntos en un solo `detail`: el catálogo no necesita
+        // separarlos y así el contrato sigue teniendo un único campo extra.
+        detail: `${method} ${stripped}`,
+      });
     }
 
     // ctx.http: cliente saliente scoped a este módulo + esta request.
@@ -153,7 +164,10 @@ export class ModulesDispatcherController {
     // - Con manifest.didacta → ScopedDidactaApi con permission matrix +
     //   idempotencia por (externalSource, externalId) + delegación a
     //   services del core (Courses/Learning/Assessments/AdminUsers).
-    const didacta: DidactaApi = this.buildScopedDidacta(matched.moduleName, matched.didactaConfig);
+    const didacta: DidactaApi = await this.buildScopedDidacta(
+      matched.moduleName,
+      matched.didactaConfig,
+    );
     // ctx.jobs: cliente para encolar primer tick (alpha.55).
     // - Sin manifest.jobLifecycle → BlockedSandboxedJobs (rechaza con
     //   JOBS_NOT_DECLARED + mensaje accionable sobre cómo declarar el bloque).
@@ -208,10 +222,27 @@ export class ModulesDispatcherController {
         : matched.handler(ctx));
       result = ret ?? { status: 204, body: null };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`[mod:${matched.moduleName}] handler lanzó: ${msg}`);
+      // SEGURIDAD (MUST-FIX 26): el mensaje del error lo escribe código
+      // third-party del marketplace y puede llevar cualquier cosa —
+      // fragmentos de SQL, rutas de fichero, respuestas de una API externa,
+      // incluso un secreto interpolado por descuido del módulo. Este
+      // dispatcher sirve rutas que pueden ser anónimas, así que el detalle
+      // NO viaja al cliente: se queda en el log del servidor y el cliente
+      // recibe un mensaje genérico y estable con su `code`.
+      //
+      // Un módulo que quiera comunicar algo al usuario final no debe lanzar:
+      // devuelve `{ status, body }` desde el handler, que sí se envía tal cual.
+      this.logger.error(
+        `Dispatcher · el handler del módulo lanzó una excepción — ` +
+          `module=${matched.moduleName} tenant=${user?.tenantId ?? 'anónimo'} ` +
+          `operation=${method} ${stripped}`,
+        err instanceof Error ? (err.stack ?? err.message) : String(err),
+      );
       throw new HttpException(
-        { message: `Error en módulo "${matched.moduleName}": ${msg}` },
+        {
+          message: 'El módulo no pudo completar la operación.',
+          code: 'MARKETPLACE_MODULE_HANDLER_ERROR',
+        },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
@@ -260,16 +291,18 @@ export class ModulesDispatcherController {
   /// request. El resolver es lazy porque ModuleRegistryService.onModuleInit
   /// instancia los services del core, y ese hook ya corrió antes de que
   /// llegue cualquier request HTTP. `protected` para override en tests.
-  protected buildScopedDidacta(
+  protected async buildScopedDidacta(
     moduleName: string,
     didactaConfig: ModuleDidactaConfig | null,
-  ): DidactaApi {
+  ): Promise<DidactaApi> {
     if (!didactaConfig) return new BlockedDidactaApi(moduleName);
+    const tenantId = this.tenantContext.get()?.tenantId ?? null;
+    const webBaseUrl = await this.tenantResolver.resolveTenantWebBaseUrl(tenantId);
     const resolver: CoreServicesResolver = {
       getCoursesService: () => this.moduleRegistry.getCoursesService(),
       getLearningService: () => this.moduleRegistry.getLearningService(),
       getAssessmentsService: () => this.moduleRegistry.getAssessmentsService(),
-      getWebBaseUrl: () => process.env['WEB_BASE_URL'] ?? 'http://localhost:3000',
+      getWebBaseUrl: () => webBaseUrl,
       getStorage: () => this.contextFactory.getStorage(),
     };
     return this.didactaFactory.build(moduleName, didactaConfig, resolver);

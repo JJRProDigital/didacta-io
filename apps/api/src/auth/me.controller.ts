@@ -35,9 +35,23 @@ import { PasswordService } from './password.service';
 import type { SessionClaims } from './token.service';
 import { ZodValidationPipe } from './zod-validation.pipe';
 
-const ALLOWED_LOCALES = ['es-ES', 'es-AR', 'en-US', 'pt-BR'] as const;
+/**
+ * Idiomas que el perfil puede GUARDAR. Refleja `SUPPORTED_LOCALES`
+ * (apps/web/src/i18n/config.ts): si la API acepta un tag que la web no sabe
+ * pintar, el usuario acaba con un perfil que la UI no puede representar.
+ *
+ * `pt-BR` estuvo aquí sin tener catálogo de mensajes: se elegía portugués,
+ * esto lo persistía, `/cuenta` confirmaba «Português (Brasil)» y la interfaz
+ * seguía en español. Retirado — se responde 400.
+ *
+ * Los perfiles que YA lo tienen guardado no se tocan: el degradado a español
+ * de `toSupportedLocale()` (web) y de `resolveRecipientLocale()`
+ * (apps/api/src/modules/notifications/email-template-catalog.ts) sigue
+ * cubriéndolos, y siguen pudiendo cambiar de idioma a cualquiera de éstos.
+ */
+export const ALLOWED_LOCALES = ['es-ES', 'es-AR', 'en-US'] as const;
 
-const updateProfileSchema = z.object({
+export const updateProfileSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   /**
    * Biografía corta opcional (máx 280). `''` o `null` la borran; omitir la
@@ -226,7 +240,10 @@ export class MeController {
       // Prisma P2002 = unique constraint violation. Para este modelo solo
       // puede ser por (tenantId, documentId) ya que email no se edita acá.
       if (typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2002') {
-        throw new BadRequestException('Ese DNI/NIE ya está registrado en este tenant.');
+        throw new BadRequestException({
+          message: 'Ese DNI/NIE ya está registrado en este tenant.',
+          code: 'AUTH_DOCUMENT_ID_TAKEN',
+        });
       }
       throw e;
     }
@@ -277,6 +294,7 @@ export class MeController {
     if (missing.length > 0) {
       throw new UnprocessableEntityException({
         message: 'Faltan datos obligatorios para completar el onboarding.',
+        code: 'AUTH_ONBOARDING_MISSING_FIELDS',
         missing,
       });
     }
@@ -407,10 +425,16 @@ export class MeController {
     }
     const ok = await this.passwords.verify(dbUser.passwordHash, dto.currentPassword);
     if (!ok) {
-      throw new ForbiddenException('La contraseña actual no es correcta.');
+      throw new ForbiddenException({
+        message: 'La contraseña actual no es correcta.',
+        code: 'AUTH_CURRENT_PASSWORD_INCORRECT',
+      });
     }
     if (dto.currentPassword === dto.newPassword) {
-      throw new BadRequestException('La nueva contraseña debe ser distinta de la actual.');
+      throw new BadRequestException({
+        message: 'La nueva contraseña debe ser distinta de la actual.',
+        code: 'AUTH_NEW_PASSWORD_SAME_AS_CURRENT',
+      });
     }
 
     const newHash = await this.passwords.hash(dto.newPassword);
@@ -473,7 +497,11 @@ export class MeController {
     const sess = await this.prisma.session.findFirst({
       where: { id, userId: user.sub },
     });
-    if (!sess) throw new ForbiddenException('Sesión no encontrada o no es tuya.');
+    if (!sess)
+      throw new ForbiddenException({
+        message: 'Sesión no encontrada o no es tuya.',
+        code: 'AUTH_SESSION_NOT_FOUND',
+      });
     await this.prisma.session.delete({ where: { id } });
     // Que el cierre surta efecto ya y no en los próximos 30 s.
     this.accountState.invalidateSession(id);

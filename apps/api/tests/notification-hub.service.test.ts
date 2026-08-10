@@ -23,6 +23,8 @@ interface UserRow {
   id: string;
   tenantId: string;
   email: string;
+  /** Ausente a propósito en la mayoría de fixtures: es el camino degradado (b). */
+  locale?: string;
 }
 
 interface PrefRow {
@@ -74,7 +76,7 @@ function makeFakePrisma(users: UserRow[] = [], prefs: PrefRow[] = []) {
           failedAt: null,
           failureReason: null,
           createdAt: new Date('2026-06-03T10:00:00.000Z'),
-          ...(args.data as NotificationRow),
+          ...args.data,
         };
         rows.push(row);
         return row;
@@ -98,7 +100,7 @@ function makeFakePrisma(users: UserRow[] = [], prefs: PrefRow[] = []) {
       // Stub: el render usa este lookup para overrides per-tenant. En
       // estos tests no hay overrides — devolvemos null y dejamos que
       // caiga al template hardcoded del producto.
-      async findUnique(): Promise<null> {
+      async findUnique(_args: unknown): Promise<null> {
         return null;
       },
     },
@@ -147,7 +149,7 @@ describe('PrismaNotificationHubService', () => {
       });
 
       expect(prisma._rows).toHaveLength(1);
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.channel).toBe('IN_APP');
       expect(n.sentAt).toBeInstanceOf(Date);
       expect(n.subject).toBe('Te matriculaste en NodeJS Avanzado');
@@ -166,7 +168,7 @@ describe('PrismaNotificationHubService', () => {
         variables: { course: 'TS', number: 'LS-2026-000001' },
       });
 
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.sentAt).toBeNull();
       expect(n.failedAt).toBeInstanceOf(Date);
       expect(n.failureReason).toBe('smtp_not_configured');
@@ -185,7 +187,7 @@ describe('PrismaNotificationHubService', () => {
         variables: { course: 'X' },
       });
 
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.failureReason).toBe('webhook_adapter_not_implemented');
     });
 
@@ -200,7 +202,7 @@ describe('PrismaNotificationHubService', () => {
         to: 'u1',
         variables: { foo: 'bar' },
       });
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.subject).toBe('inexistente.template');
       expect(n.body).toContain('"foo":"bar"');
     });
@@ -222,7 +224,7 @@ describe('PrismaNotificationHubService', () => {
         variables: { course: 'A' },
       });
 
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.sentAt).toBeNull();
       expect(n.failedAt).toBeInstanceOf(Date);
       expect(n.failureReason).toBe('smtp_not_configured');
@@ -249,7 +251,7 @@ describe('PrismaNotificationHubService', () => {
         variables: { course: 'A' },
       });
 
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.failureReason?.startsWith('smtp_config_invalid:')).toBe(true);
     });
 
@@ -272,7 +274,7 @@ describe('PrismaNotificationHubService', () => {
         variables: { course: 'A' },
       });
 
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.failureReason).toBe('recipient_email_not_found');
     });
 
@@ -296,7 +298,7 @@ describe('PrismaNotificationHubService', () => {
         variables: { course: 'TS', number: 'LS-1' },
       });
 
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.sentAt).toBeInstanceOf(Date);
       expect(n.failedAt).toBeNull();
       expect(smtp.send).toHaveBeenCalledWith(
@@ -332,7 +334,7 @@ describe('PrismaNotificationHubService', () => {
         variables: { course: 'A' },
       });
 
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.sentAt).toBeNull();
       expect(n.failureReason).toContain('smtp_send_failed');
       expect(n.failureReason).toContain('connection refused');
@@ -363,7 +365,7 @@ describe('PrismaNotificationHubService', () => {
         variables: { course: 'NodeJS' },
       });
 
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(realtime.publishInApp).toHaveBeenCalledTimes(1);
       expect(realtime.publishInApp).toHaveBeenCalledWith(
         't1',
@@ -599,7 +601,7 @@ describe('PrismaNotificationHubService', () => {
         to: 'u1',
         variables: { authorName: 'AutorEjemplo', commentId: 'c1', postId: null, handle: 'ana' },
       });
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.body).toContain('AutorEjemplo te mencionó en un comentario');
       expect(n.body).not.toContain('{{');
     });
@@ -615,10 +617,150 @@ describe('PrismaNotificationHubService', () => {
         to: 'u1',
         variables: { authorName: 'Ana', commentId: null, postId: 'p1', handle: 'ana' },
       });
-      const [n] = prisma._rows;
+      const n = prisma._rows[0]!;
       expect(n.body).toContain('Ana te mencionó en un post');
       expect(n.body).not.toContain('comentario');
       expect(n.body).not.toContain('{{');
+    });
+  });
+
+  // ==========================================================================
+  // i18n: `locale` es OPCIONAL. Sin él, el hub resuelve `user.locale` a partir
+  // de `to`. Los tres caminos degradados aterrizan en es-ES a propósito; si
+  // alguno dejara de hacerlo en silencio, estos tests lo cazan.
+  // ==========================================================================
+  describe('resolución del idioma del destinatario (locale opcional)', () => {
+    const EN_ENROLLMENT = 'You have just enrolled in the course';
+    const ES_ENROLLMENT = 'Acabas de matricularte en el curso';
+
+    async function sendWithoutLocale(users: UserRow[]) {
+      const prisma = makeFakePrisma(users);
+      const svc = new PrismaNotificationHubService(prisma as never, noopLogger);
+      await svc.send({
+        tenantId: 't1',
+        channel: 'in-app',
+        templateKey: 'enrollment.created',
+        to: 'u1',
+        variables: { course: 'NodeJS' },
+      });
+      return prisma._rows[0];
+    }
+
+    it('camino feliz: el usuario en en-US recibe la notificación en inglés', async () => {
+      const n = await sendWithoutLocale([
+        { id: 'u1', tenantId: 't1', email: 'a@example.com', locale: 'en-US' },
+      ]);
+      expect(n!.subject).toBe('You enrolled in NodeJS');
+      expect(n!.body).toContain(EN_ENROLLMENT);
+    });
+
+    it('el usuario en es-ES sigue recibiendo el copy español', async () => {
+      const n = await sendWithoutLocale([
+        { id: 'u1', tenantId: 't1', email: 'a@example.com', locale: 'es-ES' },
+      ]);
+      expect(n!.body).toContain(ES_ENROLLMENT);
+    });
+
+    it('degradado (a): destinatario inexistente → es-ES, sin romper el envío', async () => {
+      const n = await sendWithoutLocale([]);
+      expect(n!.body).toContain(ES_ENROLLMENT);
+    });
+
+    it('degradado (a): destinatario de otro tenant → es-ES', async () => {
+      const n = await sendWithoutLocale([
+        { id: 'u1', tenantId: 'OTRO', email: 'a@example.com', locale: 'en-US' },
+      ]);
+      expect(n!.body).toContain(ES_ENROLLMENT);
+    });
+
+    it('degradado (a): si el lookup lanza, el envío continúa en es-ES', async () => {
+      const prisma = makeFakePrisma();
+      prisma.user.findUnique = () => Promise.reject(new Error('db down'));
+      const svc = new PrismaNotificationHubService(prisma as never, noopLogger);
+      await expect(
+        svc.send({
+          tenantId: 't1',
+          channel: 'in-app',
+          templateKey: 'enrollment.created',
+          to: 'u1',
+          variables: { course: 'NodeJS' },
+        }),
+      ).resolves.toBeUndefined();
+      expect(prisma._rows[0]!.body).toContain(ES_ENROLLMENT);
+    });
+
+    it('degradado (b): usuario con locale vacío o en blanco → es-ES', async () => {
+      for (const locale of ['', '   ']) {
+        const n = await sendWithoutLocale([
+          { id: 'u1', tenantId: 't1', email: 'a@example.com', locale },
+        ]);
+        expect(n!.body, `locale=${JSON.stringify(locale)}`).toContain(ES_ENROLLMENT);
+      }
+    });
+
+    it('degradado (c): locale sin catálogo (pt-BR) → copy español', async () => {
+      const n = await sendWithoutLocale([
+        { id: 'u1', tenantId: 't1', email: 'a@example.com', locale: 'pt-BR' },
+      ]);
+      expect(n!.body).toContain(ES_ENROLLMENT);
+      expect(n!.body).not.toContain('{{');
+    });
+
+    it('el locale explícito del caller manda sobre el del usuario', async () => {
+      const prisma = makeFakePrisma([
+        { id: 'u1', tenantId: 't1', email: 'a@example.com', locale: 'en-US' },
+      ]);
+      const svc = new PrismaNotificationHubService(prisma as never, noopLogger);
+      await svc.send({
+        tenantId: 't1',
+        channel: 'in-app',
+        templateKey: 'enrollment.created',
+        locale: 'es-ES',
+        to: 'u1',
+        variables: { course: 'NodeJS' },
+      });
+      expect(prisma._rows[0]!.body).toContain(ES_ENROLLMENT);
+    });
+
+    it('con locale explícito NO consulta al usuario (sin query de más)', async () => {
+      const prisma = makeFakePrisma([{ id: 'u1', tenantId: 't1', email: 'a@example.com' }]);
+      const spy = vi.fn(prisma.user.findUnique);
+      prisma.user.findUnique = spy;
+      const svc = new PrismaNotificationHubService(prisma as never, noopLogger);
+      await svc.send({
+        tenantId: 't1',
+        channel: 'in-app',
+        templateKey: 'enrollment.created',
+        locale: 'es-ES',
+        to: 'u1',
+        variables: { course: 'NodeJS' },
+      });
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('el override per-tenant del locale del usuario gana al default traducido', async () => {
+      const prisma = makeFakePrisma([
+        { id: 'u1', tenantId: 't1', email: 'a@example.com', locale: 'en-US' },
+      ]);
+      const seen: string[] = [];
+      prisma.notificationTemplate.findUnique = (args: unknown) => {
+        const locale = (args as { where: { tenantId_key_channel_locale: { locale: string } } })
+          .where.tenantId_key_channel_locale.locale;
+        seen.push(locale);
+        return Promise.resolve(
+          locale === 'en-US' ? { subject: 'Custom {{course}}', body: 'Custom body' } : null,
+        ) as never;
+      };
+      const svc = new PrismaNotificationHubService(prisma as never, noopLogger);
+      await svc.send({
+        tenantId: 't1',
+        channel: 'in-app',
+        templateKey: 'enrollment.created',
+        to: 'u1',
+        variables: { course: 'NodeJS' },
+      });
+      expect(seen).toEqual(['en-US']);
+      expect(prisma._rows[0]!.subject).toBe('Custom NodeJS');
     });
   });
 });

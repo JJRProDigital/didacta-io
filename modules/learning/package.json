@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Módulo de matriculación, progreso y finalización (mod.learning)",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -18,7 +19,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.tests.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rm -rf dist .turbo"
@@ -26,14 +27,14 @@
   "dependencies": {
     "@didacta/core-kernel": "workspace:*",
     "@didacta/database": "workspace:*",
-    "adm-zip": "^0.5.16",
-    "fast-xml-parser": "^4.5.1",
+    "adm-zip": "^0.6.0",
+    "fast-xml-parser": "^5.7.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.7"
   }
 }

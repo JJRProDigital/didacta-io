@@ -98,7 +98,8 @@ export interface PaginatedWebhookEvents {
 
 function withAuth(): string {
   const token = authStorage.getAccessToken();
-  if (!token) throw new ApiHttpError({ message: 'Sesión expirada', status: 401 });
+  if (!token)
+    throw new ApiHttpError({ message: 'Sesión expirada', status: 401, code: 'sessionExpired' });
   return token;
 }
 
@@ -268,6 +269,8 @@ export const zoomLiveApi = {
     accountId: string;
     clientId: string;
     clientSecret: string;
+    /** Vacío conserva el guardado previo (merge del backend, igual que clientSecret). */
+    webhookSecret?: string;
   }): Promise<void> {
     await apiFetch(
       '/api/v1/tenant-settings/zoom-live/credentials',

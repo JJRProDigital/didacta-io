@@ -83,7 +83,8 @@ export interface AdminReferrerRow {
 
 function withAuth(): string {
   const token = authStorage.getAccessToken();
-  if (!token) throw new ApiHttpError({ message: 'Sesión expirada', status: 401 });
+  if (!token)
+    throw new ApiHttpError({ message: 'Sesión expirada', status: 401, code: 'sessionExpired' });
   return token;
 }
 
@@ -214,11 +215,3 @@ export const referralsAdminApi = {
     );
   },
 };
-
-/** Céntimos → "12,34 €" (es-ES). */
-export function formatReferralCents(cents: number, currency = 'eur'): string {
-  return new Intl.NumberFormat('es-ES', {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
-}

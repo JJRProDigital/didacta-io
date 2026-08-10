@@ -21,7 +21,9 @@
  *     antes de persistir el vínculo (cachea unitAmount y currency).
  */
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useTranslations } from 'next-intl';
 import { Icon } from '@/components/icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -30,20 +32,67 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ApiHttpError } from '@/lib/api-client';
 import { authStorage } from '@/lib/auth-storage';
-import { billingApi, formatPrice, type BillingProduct } from '@/modules/billing';
+import { apiErrorMessage } from '@/lib/i18n/api-error';
+import { formatCurrency, formatDateTime } from '@/lib/i18n/format';
+import type { TranslatorLike } from '@/lib/i18n/labels';
+import { billingApi, type BillingProduct } from '@/modules/billing';
 import { coursesApi, type Course } from '@/lib/courses';
 
 const PRICE_ID_PATTERN = /^price_[A-Za-z0-9]+$/;
 
+/** unitAmount en céntimos + currency ISO-4217 → moneda formateada según el locale activo. */
+function fmtPrice(unitAmount: number, currency: string): string {
+  try {
+    return formatCurrency(unitAmount / 100, currency.toUpperCase());
+  } catch {
+    return `${(unitAmount / 100).toFixed(2)} ${currency.toUpperCase()}`;
+  }
+}
+
+/** Error de acción, con marca aparte para el caso "Stripe sin configurar" (CTA a Administración → Pagos). */
+interface ActionError {
+  message: string;
+  stripeMissing: boolean;
+}
+
+function toActionError(e: unknown, fallback: string, tErrors: TranslatorLike): ActionError {
+  if (e instanceof ApiHttpError) {
+    return {
+      message: apiErrorMessage(e, tErrors),
+      stripeMissing: e.code === 'BILLING_STRIPE_CONFIG_MISSING',
+    };
+  }
+  return { message: fallback, stripeMissing: false };
+}
+
+function ActionErrorMessage({ error }: { error: ActionError }) {
+  const t = useTranslations('adminPagos');
+  return (
+    <p className="mt-3 text-sm text-danger-700">
+      {error.message}
+      {error.stripeMissing ? (
+        <>
+          {' '}
+          <Link href="/admin/configuracion" className="font-semibold underline">
+            {t('billing.stripeMissingCta')}
+          </Link>
+          .
+        </>
+      ) : null}
+    </p>
+  );
+}
+
 export default function AdminBillingProductsPage() {
+  const t = useTranslations('adminPagos');
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">
-        <h1 className="font-display text-2xl font-bold tracking-tight">Pagos · Productos Stripe</h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">{t('billing.title')}</h1>
         <p className="text-text-muted">
-          Vincula cursos del tenant a un <code className="font-mono">Stripe Price ID</code>. El
-          botón &laquo;Comprar curso&raquo; del catálogo abrirá Checkout y, tras pago, el alumno
-          quedará matriculado automáticamente.
+          {t.rich('billing.subtitle', {
+            code: (chunks) => <code className="font-mono">{chunks}</code>,
+          })}
         </p>
       </header>
 
@@ -53,10 +102,12 @@ export default function AdminBillingProductsPage() {
 }
 
 function BillingProductsPanel() {
+  const t = useTranslations('adminPagos');
+  const tErrors = useTranslations('errors');
   const [products, setProducts] = useState<BillingProduct[] | null>(null);
   const [courses, setCourses] = useState<Course[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<ActionError | null>(null);
   const [actionInfo, setActionInfo] = useState<string | null>(null);
   // Form alta
   const [courseId, setCourseId] = useState('');
@@ -75,13 +126,10 @@ function BillingProductsPanel() {
         setProducts(productsRes.products);
         setCourses(coursesRes);
       } catch (e) {
-        setError(
-          e instanceof ApiHttpError
-            ? e.message
-            : 'No se pudo cargar el panel de pagos. Verifica tu sesión y rol.',
-        );
+        setError(e instanceof ApiHttpError ? apiErrorMessage(e, tErrors) : t('billing.loadError'));
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function refreshProducts() {
@@ -101,9 +149,10 @@ function BillingProductsPanel() {
     if (!token) return;
     if (!courseId || !stripePriceId) return;
     if (!PRICE_ID_PATTERN.test(stripePriceId.trim())) {
-      setActionError(
-        'El Stripe Price ID debe empezar por "price_" y solo contener letras y números.',
-      );
+      setActionError({
+        message: t('billing.priceIdFormatError'),
+        stripeMissing: false,
+      });
       return;
     }
     setCreating(true);
@@ -114,13 +163,9 @@ function BillingProductsPanel() {
       setProducts((prev) => (prev ? [product, ...prev] : [product]));
       setCourseId('');
       setStripePriceId('');
-      setActionInfo(`Producto creado para el curso ${courseTitle(courses, product.courseId)}.`);
+      setActionInfo(t('billing.createdInfo', { title: courseTitle(courses, product.courseId, t) }));
     } catch (e) {
-      setActionError(
-        e instanceof ApiHttpError
-          ? e.message
-          : 'No se pudo crear el producto. Revisa que el price_id exista y esté activo en Stripe.',
-      );
+      setActionError(toActionError(e, t('billing.createError'), tErrors));
     } finally {
       setCreating(false);
     }
@@ -137,7 +182,7 @@ function BillingProductsPanel() {
         prev ? prev.map((it) => (it.id === product.id ? product : it)) : prev,
       );
     } catch (e) {
-      setActionError(e instanceof ApiHttpError ? e.message : 'No se pudo cambiar el estado.');
+      setActionError(toActionError(e, t('billing.toggleError'), tErrors));
     }
   }
 
@@ -145,12 +190,15 @@ function BillingProductsPanel() {
     const token = authStorage.getAccessToken();
     if (!token) return;
     const next = window.prompt(
-      `Nuevo Stripe Price ID para "${courseTitle(courses, p.courseId)}":`,
+      t('billing.changePricePrompt', { title: courseTitle(courses, p.courseId, t) }),
       p.stripePriceId,
     );
     if (!next || next.trim() === p.stripePriceId) return;
     if (!PRICE_ID_PATTERN.test(next.trim())) {
-      setActionError('El Stripe Price ID debe empezar por "price_".');
+      setActionError({
+        message: t('billing.priceIdPrefixError'),
+        stripeMissing: false,
+      });
       return;
     }
     setActionError(null);
@@ -162,31 +210,27 @@ function BillingProductsPanel() {
       setProducts((prev) =>
         prev ? prev.map((it) => (it.id === product.id ? product : it)) : prev,
       );
-      setActionInfo(`Price actualizado: ${formatPrice(product.unitAmount, product.currency)}.`);
-    } catch (e) {
-      setActionError(
-        e instanceof ApiHttpError ? e.message : 'No se pudo cambiar el price. Verifica Stripe.',
+      setActionInfo(
+        t('billing.priceUpdatedInfo', { price: fmtPrice(product.unitAmount, product.currency) }),
       );
+    } catch (e) {
+      setActionError(toActionError(e, t('billing.changePriceError'), tErrors));
     }
   }
 
   async function handleDelete(p: BillingProduct) {
     const token = authStorage.getAccessToken();
     if (!token) return;
-    if (
-      !window.confirm(
-        `¿Desvincular "${courseTitle(courses, p.courseId)}" de Stripe? Las órdenes históricas se conservan; el botón "Comprar curso" dejará de aparecer.`,
-      )
-    )
+    if (!window.confirm(t('billing.deleteConfirm', { title: courseTitle(courses, p.courseId, t) })))
       return;
     setActionError(null);
     setActionInfo(null);
     try {
       await billingApi.deleteProduct(token, p.id);
       setProducts((prev) => (prev ? prev.filter((it) => it.id !== p.id) : prev));
-      setActionInfo('Producto desvinculado.');
+      setActionInfo(t('billing.deletedInfo'));
     } catch (e) {
-      setActionError(e instanceof ApiHttpError ? e.message : 'No se pudo desvincular el producto.');
+      setActionError(toActionError(e, t('billing.deleteError'), tErrors));
     }
   }
 
@@ -225,25 +269,29 @@ function BillingProductsPanel() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Icon name="plus" size={18} />
-            Vincular un curso a un Stripe Price
+            {t('billing.formTitle')}
           </CardTitle>
           <CardDescription>
-            Antes de añadirlo aquí, crea un <strong>Product</strong> y un <strong>Price</strong> en{' '}
-            <a
-              href="https://dashboard.stripe.com/products"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-brand-700 underline"
-            >
-              tu panel de Stripe
-            </a>{' '}
-            (modo test o live según tu configuración) y copia el <code>price_id</code>.
+            {t.rich('billing.formHelp', {
+              strong: (chunks) => <strong>{chunks}</strong>,
+              code: (chunks) => <code>{chunks}</code>,
+              link: (chunks) => (
+                <a
+                  href="https://dashboard.stripe.com/products"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-700 underline"
+                >
+                  {chunks}
+                </a>
+              ),
+            })}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleCreate} className="flex flex-col gap-3 md:flex-row md:items-end">
             <div className="flex flex-1 flex-col gap-1.5">
-              <Label htmlFor="courseId">Curso</Label>
+              <Label htmlFor="courseId">{t('billing.courseLabel')}</Label>
               <select
                 id="courseId"
                 value={courseId}
@@ -253,8 +301,8 @@ function BillingProductsPanel() {
               >
                 <option value="">
                   {availableCourses.length === 0
-                    ? 'Todos los cursos publicados ya están vinculados'
-                    : '— Selecciona un curso —'}
+                    ? t('billing.allCoursesLinked')
+                    : t('billing.selectCoursePh')}
                 </option>
                 {availableCourses.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -264,10 +312,10 @@ function BillingProductsPanel() {
               </select>
             </div>
             <div className="flex flex-1 flex-col gap-1.5">
-              <Label htmlFor="stripePriceId">Stripe Price ID</Label>
+              <Label htmlFor="stripePriceId">{t('billing.priceIdLabel')}</Label>
               <Input
                 id="stripePriceId"
-                placeholder="price_1AbC2dEfGhIj…"
+                placeholder={t('billing.priceIdPh')}
                 value={stripePriceId}
                 onChange={(e) => setStripePriceId(e.target.value)}
                 autoComplete="off"
@@ -276,10 +324,10 @@ function BillingProductsPanel() {
               />
             </div>
             <Button type="submit" disabled={creating || !courseId || !stripePriceId.trim()}>
-              {creating ? 'Creando…' : 'Vincular'}
+              {creating ? t('billing.creatingCta') : t('billing.linkCta')}
             </Button>
           </form>
-          {actionError ? <p className="mt-3 text-sm text-danger-700">{actionError}</p> : null}
+          {actionError ? <ActionErrorMessage error={actionError} /> : null}
           {actionInfo ? <p className="mt-3 text-sm text-success-700">{actionInfo}</p> : null}
         </CardContent>
       </Card>
@@ -288,8 +336,7 @@ function BillingProductsPanel() {
       {list.length === 0 ? (
         <Card>
           <CardContent className="p-6 text-sm text-text-muted">
-            Aún no has vinculado ningún curso a Stripe. Vincula uno arriba para que aparezca el
-            botón &laquo;Comprar curso&raquo; en el catálogo público.
+            {t('billing.emptyList')}
           </CardContent>
         </Card>
       ) : (
@@ -298,7 +345,7 @@ function BillingProductsPanel() {
             <ProductRow
               key={p.id}
               product={p}
-              courseTitle={courseTitle(courses, p.courseId)}
+              courseTitle={courseTitle(courses, p.courseId, t)}
               onToggleActive={() => handleToggleActive(p)}
               onChangePrice={() => handleChangePrice(p)}
               onDelete={() => handleDelete(p)}
@@ -323,6 +370,7 @@ function ProductRow({
   onChangePrice: () => void;
   onDelete: () => void;
 }) {
+  const t = useTranslations('adminPagos');
   return (
     <Card>
       <CardHeader>
@@ -330,42 +378,42 @@ function ProductRow({
           <Icon name="book" size={18} />
           <span>{courseTitle}</span>
           {product.active ? (
-            <Badge className="bg-success-600 text-white">Activo</Badge>
+            <Badge className="bg-success-600 text-white">{t('billing.activeBadge')}</Badge>
           ) : (
-            <Badge variant="outline">Inactivo</Badge>
+            <Badge variant="outline">{t('billing.inactiveBadge')}</Badge>
           )}
         </CardTitle>
         <CardDescription>
-          Vinculado {new Date(product.createdAt).toLocaleString('es-ES')}
+          {t('billing.linkedAt', { date: formatDateTime(product.createdAt) })}
           {product.updatedAt !== product.createdAt
-            ? ` · actualizado ${new Date(product.updatedAt).toLocaleString('es-ES')}`
+            ? ` · ${t('billing.updatedAt', { date: formatDateTime(product.updatedAt) })}`
             : ''}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <dl className="grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
           <div>
-            <dt className="text-text-muted">Precio</dt>
+            <dt className="text-text-muted">{t('billing.priceLabel')}</dt>
             <dd className="font-mono font-semibold">
-              {formatPrice(product.unitAmount, product.currency)}
+              {fmtPrice(product.unitAmount, product.currency)}
             </dd>
           </div>
           <div className="md:col-span-2">
-            <dt className="text-text-muted">Stripe Price ID</dt>
+            <dt className="text-text-muted">{t('billing.priceIdLabel')}</dt>
             <dd className="break-all font-mono text-xs">{product.stripePriceId}</dd>
           </div>
         </dl>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="secondary" onClick={onChangePrice}>
             <Icon name="edit" size={16} />
-            Cambiar Price ID
+            {t('billing.changePriceCta')}
           </Button>
           <Button type="button" variant="secondary" onClick={onToggleActive}>
-            {product.active ? 'Desactivar' : 'Reactivar'}
+            {product.active ? t('billing.deactivateCta') : t('billing.reactivateCta')}
           </Button>
           <Button type="button" variant="ghost" onClick={onDelete}>
             <Icon name="trash" size={16} />
-            Desvincular
+            {t('billing.unlinkCta')}
           </Button>
         </div>
       </CardContent>
@@ -373,7 +421,10 @@ function ProductRow({
   );
 }
 
-function courseTitle(courses: Course[] | null, courseId: string): string {
+function courseTitle(courses: Course[] | null, courseId: string, t: TranslatorLike): string {
   if (!courses) return courseId;
-  return courses.find((c) => c.id === courseId)?.title ?? `Curso ${courseId.slice(0, 8)}`;
+  return (
+    courses.find((c) => c.id === courseId)?.title ??
+    t('billing.courseFallback', { id: courseId.slice(0, 8) })
+  );
 }

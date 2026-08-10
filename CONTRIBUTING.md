@@ -111,7 +111,7 @@ El nombre "Didacta", el logo y derivados son marcas registradas de VA360 LABS S.
 
 ## Reconocimiento
 
-Las contribuciones aceptadas aparecen en `CONTRIBUTORS.md` (con tu consentimiento) cuando publiquemos `v1.0.0`.
+Las contribuciones aceptadas se reconocen (con tu consentimiento) en las notas de publicación de cada versión y en la lista de contribuidores de GitHub.
 
 ## Contacto
 

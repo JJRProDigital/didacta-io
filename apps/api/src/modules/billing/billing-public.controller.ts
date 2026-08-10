@@ -12,15 +12,14 @@ import {
   Param,
   Post,
   Req,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import type { FastifyRequest } from 'fastify';
-import type { BillingService, CourseOfferOption } from '@didacta/mod-billing';
+import type { CourseOfferOption } from '@didacta/mod-billing';
 import { extractClientContext } from '../../auth/client-context';
+import { readRequestLocale } from '../../common/checkout-locale';
 import { ZodValidationPipe } from '../../auth/zod-validation.pipe';
-import { resolveWebBaseUrl } from '../../common/resolve-web-base-url';
 import { PrismaService } from '../../prisma/prisma.service';
 import { runAsTenant } from '../../tenancy/tenant-context.storage';
 import { TenantResolverService } from '../../tenancy/tenant-resolver.service';
@@ -35,7 +34,10 @@ const uuidSchema = z.string().uuid();
  */
 function ensureUuid(id: string): string {
   if (!uuidSchema.safeParse(id).success) {
-    throw new NotFoundException('Curso no encontrado.');
+    throw new NotFoundException({
+      message: 'Curso no encontrado.',
+      code: 'BILLING_COURSE_NOT_FOUND',
+    });
   }
   return id;
 }
@@ -76,9 +78,10 @@ interface PublicCatalogCourse {
  * El checkout es de Stripe hosted: aquí solo se genera la URL de la session;
  * la cuenta se materializa en el webhook tras el pago (provisioning).
  *
- * Si mod.billing no está configurado (sin claves Stripe), el catálogo y la
- * oferta responden VACÍOS (la página pública sigue renderizando) y el checkout
- * responde 503.
+ * El catálogo y la oferta son datos propios (no dependen de Stripe): se
+ * sirven aunque el tenant no haya configurado sus credenciales todavía. Solo
+ * el checkout necesita Stripe — sin credenciales (ni propias del tenant en
+ * Administración → Pagos ni fallback de instancia) responde 503.
  */
 @ApiTags('Billing · Público')
 @Controller('modules/billing/public')
@@ -92,19 +95,14 @@ export class BillingPublicController {
   @Get('catalog')
   @ApiOperation({
     summary:
-      'Catálogo público de cursos a la venta: cursos PUBLISHED con opciones de compra activas y precios. Tenant por Host. Sin Stripe configurado devuelve lista vacía.',
+      'Catálogo público de cursos a la venta: cursos PUBLISHED con opciones de compra activas y precios. Tenant por Host.',
   })
   async catalog(@Req() req: FastifyRequest): Promise<{ courses: PublicCatalogCourse[] }> {
     const tenantId = await this.resolveTenantId(req);
     // RLS F2: ruta pública sin middleware de tenant — el cuerpo corre bajo el
     // ALS del tenant resuelto por Host para que cada query quede escopada.
     return runAsTenant(tenantId, async () => {
-      let billing: BillingService;
-      try {
-        billing = this.registry.getBillingService();
-      } catch {
-        return { courses: [] };
-      }
+      const billing = this.registry.getBillingService();
       const ofertas = await billing.getCatalog(tenantId);
       if (ofertas.length === 0) return { courses: [] };
 
@@ -161,11 +159,7 @@ export class BillingPublicController {
         select: { id: true },
       });
       if (!curso) return { forSale: false, options: [] };
-      try {
-        return await this.registry.getBillingService().getCourseOffer(tenantId, courseId);
-      } catch {
-        return { forSale: false, options: [] };
-      }
+      return this.registry.getBillingService().getCourseOffer(tenantId, courseId);
     });
   }
 
@@ -189,27 +183,34 @@ export class BillingPublicController {
         where: { id: courseId, tenantId, deletedAt: null },
         select: { status: true },
       });
-      if (!curso) throw new NotFoundException('Curso no encontrado.');
+      if (!curso)
+        throw new NotFoundException({
+          message: 'Curso no encontrado.',
+          code: 'BILLING_COURSE_NOT_FOUND',
+        });
       if (curso.status !== 'PUBLISHED') {
-        throw new ConflictException('Este curso no está disponible para la compra.');
+        throw new ConflictException({
+          message: 'Este curso no está disponible para la compra.',
+          code: 'BILLING_COURSE_NOT_PURCHASABLE',
+        });
       }
 
-      let billing: BillingService;
-      try {
-        billing = this.registry.getBillingService();
-      } catch {
-        throw new ServiceUnavailableException(
-          'La pasarela de pago no está configurada en esta plataforma.',
-        );
-      }
+      const billing = this.registry.getBillingService();
 
-      const base = resolveWebBaseUrl(req).replace(/\/$/, '');
+      const base = (await this.tenantResolver.resolveTenantWebBaseUrl(tenantId, req)).replace(
+        /\/$/,
+        '',
+      );
       const result = await billing.startCheckout({
         tenantId,
         userId: null,
         userEmail: dto.email,
         courseId,
         optionId: dto.optionId,
+        // Idioma con el que el comprador está navegando AHORA. Viaja en la
+        // metadata de Stripe porque su fila de `user` no existe todavía: se
+        // crea en el webhook, después del salto a la pasarela.
+        locale: readRequestLocale(req.headers),
         // Retorno a las páginas PÚBLICAS del catálogo: el comprador aún no tiene
         // sesión y las de /cursos/checkout viven tras el gate de login.
         successUrl: `${base}/catalogo/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
@@ -227,7 +228,10 @@ export class BillingPublicController {
     const hostStr = Array.isArray(host) ? host[0] : host;
     const tenant = await this.tenantResolver.resolveByHost(hostStr);
     if (!tenant) {
-      throw new NotFoundException('Comunidad no encontrada para este dominio.');
+      throw new NotFoundException({
+        message: 'Comunidad no encontrada para este dominio.',
+        code: 'BILLING_TENANT_NOT_FOUND',
+      });
     }
     return tenant.id;
   }

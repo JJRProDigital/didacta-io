@@ -93,6 +93,54 @@ export interface TemplateDef {
   body: string;
 }
 
+/**
+ * Locale de referencia del producto. Es el ÚNICO idioma con copy por defecto
+ * garantizado para todas las claves del catálogo, y por eso es el destino
+ * deliberado de cualquier camino degradado (destinatario desconocido, `locale`
+ * vacío o un locale que el producto todavía no traduce). No es un default
+ * implícito: quien caiga aquí lo hace porque no hay nada mejor que servir.
+ */
+export const HUB_DEFAULT_LOCALE = 'es-ES';
+
+/**
+ * Idiomas con catálogo de plantillas propio. Es una lista CERRADA y más corta
+ * que los locales que el usuario puede guardar en su perfil (`ALLOWED_LOCALES`
+ * de `me.controller.ts` admite además `es-AR` y `pt-BR`): las variantes
+ * regionales comparten catálogo por idioma base y `pt-BR` todavía no tiene
+ * traducción, así que cae a `es`.
+ */
+export const HUB_TEMPLATE_LANGS = ['es', 'en'] as const;
+export type HubTemplateLang = (typeof HUB_TEMPLATE_LANGS)[number];
+
+/**
+ * Reduce un locale BCP-47 (`en-US`, `es_AR`, `EN`) al idioma con catálogo.
+ * Cualquier cosa que no sea inglés cae a `es` — ver `HUB_DEFAULT_LOCALE`.
+ */
+export function toHubTemplateLang(locale: string | null | undefined): HubTemplateLang {
+  const base = (typeof locale === 'string' ? locale : '').trim().toLowerCase().split(/[-_]/)[0];
+  return base === 'en' ? 'en' : 'es';
+}
+
+/**
+ * Idioma efectivo de un destinatario a partir del `locale` guardado en su fila
+ * de `user`, para los composers que leen esa columna directamente (reset de
+ * contraseña, alta por API, pruebas de SMTP).
+ *
+ * CAMINO DEGRADADO ÚNICO y deliberado: una fila con `locale` vacío o ausente
+ * cae a `HUB_DEFAULT_LOCALE`. La columna tiene default en BD, así que solo pasa
+ * si alguien la escribió a mano en blanco o si el composer no encontró usuario.
+ *
+ * Un locale guardado pero SIN traducir (`pt-BR` es alcanzable HOY: lo admite
+ * `ALLOWED_LOCALES` en me.controller.ts) NO se resuelve aquí: se devuelve tal
+ * cual para que un override per-tenant en ese locale todavía pueda ganar, y lo
+ * absorbe `toHubTemplateLang` al elegir catálogo. Misma semántica que
+ * `resolveUserLocale` del NotificationHub.
+ */
+export function resolveRecipientLocale(stored: string | null | undefined): string {
+  const trimmed = typeof stored === 'string' ? stored.trim() : '';
+  return trimmed || HUB_DEFAULT_LOCALE;
+}
+
 export const HUB_TEMPLATE_DEFAULTS: Record<string, TemplateDef> = {
   'enrollment.created': {
     subject: 'Te matriculaste en {{course}}',
@@ -142,11 +190,17 @@ export const HUB_TEMPLATE_DEFAULTS: Record<string, TemplateDef> = {
       'Tu resumen semanal de la comunidad ({{mentionsCount}} menciones · {{repliesCount}} respuestas)',
     body: 'Esta semana en la comunidad:\n\n· {{mentionsCount}} mención(es) nueva(s)\n· {{repliesCount}} respuesta(s) en hilos donde participaste\n\nRevísalas todas en tu sección de menciones. Desde el resumen anterior: {{sinceIso}}.',
   },
-  // Aviso masivo (broadcast) a toda la comunidad. Passthrough: el worker compone
-  // el asunto y el cuerpo (mensaje + enlace de baja en email) y los pasa como vars.
+  // Aviso masivo (broadcast) a toda la comunidad. El asunto y el cuerpo los
+  // escribe el admin al enviarlo, así que van como passthrough; el enlace a la
+  // publicación y el pie de baja SÍ son copy del producto y por eso viven aquí
+  // (antes los concatenaba el worker al `body`, en español, y llegaban al hub
+  // dentro de una variable donde ninguna traducción los alcanzaba).
+  //
+  // Los dos bloques son secciones: sin `postUrl` / sin `unsubUrl` desaparecen,
+  // que es como el aviso in-app se queda sin pie de baja.
   'community.broadcast': {
     subject: '{{subject}}',
-    body: '{{body}}',
+    body: '{{body}}{{#postUrl}}\n\nVer la publicación: {{postUrl}}{{/postUrl}}{{#unsubUrl}}\n\n———\nRecibes este aviso como miembro de la comunidad. Para dejar de recibir avisos, entra aquí: {{unsubUrl}}{{/unsubUrl}}',
   },
   // Aviso de desbloqueo de una clase programada por fecha (MEJ-009). Lo dispara
   // el LessonUnlockNotifierWorker cuando la lección cruza su publishAt.
@@ -217,6 +271,380 @@ export const HUB_TEMPLATE_DEFAULTS: Record<string, TemplateDef> = {
     body: 'Ayer estuviste inscrito en "{{topic}}" y aún no nos has contado qué te pareció. Son 30 segundos y la respuesta es anónima — de verdad nos ayuda a mejorar las próximas clases.{{#surveyUrl}}\n\nValórala desde la página de la clase:\n{{surveyUrl}}{{/surveyUrl}}\n\n(Si ya la valoraste desde otra cuenta o no llegaste a asistir, ignora este mensaje.)',
   },
 };
+
+/**
+ * Traducción al inglés de `HUB_TEMPLATE_DEFAULTS`. MISMAS claves y MISMOS
+ * placeholders (`{{var}}`, secciones `{{#var}}`/`{{^var}}`): un test verifica
+ * que ambos catálogos no divergen. Si una clave faltara aquí,
+ * `resolveHubDefault` cae al español en vez de dejar la notificación vacía.
+ */
+export const HUB_TEMPLATE_DEFAULTS_EN: Record<string, TemplateDef> = {
+  'enrollment.created': {
+    subject: 'You enrolled in {{course}}',
+    body: 'You have just enrolled in the course "{{course}}". Time to learn! You can pick up where you left off from your dashboard.',
+  },
+  'course.completed': {
+    subject: 'Course completed!',
+    body: 'Congratulations, you completed the course "{{course}}". Your certificate is being generated and will be available in your certificates section.',
+  },
+  'certificate.issued': {
+    subject: 'Your certificate for "{{course}}" is ready',
+    body: 'You can now download certificate number {{number}} from My certificates.',
+  },
+  'attempt.passed': {
+    subject: 'You passed the quiz for "{{course}}"',
+    body: 'Your attempt at the quiz "{{quiz}}" scored {{scorePercent}}% — you passed!',
+  },
+  'attempt.failed': {
+    subject: 'Quiz result: not passed',
+    body: 'Your attempt at the quiz "{{quiz}}" scored {{scorePercent}}%, below the {{passThreshold}}% pass threshold. You can try again if the quiz allows it.',
+  },
+  'attempt.graded': {
+    subject: 'Your instructor graded your quiz',
+    body: 'Your attempt at the quiz "{{quiz}}" was graded manually. Result: {{scorePercent}}% ({{result}}).',
+  },
+  'admin.smtp.test': {
+    subject: 'SMTP test — {{tenantName}}',
+    body: 'If you received this email, the SMTP configuration for {{tenantName}} is working correctly.\n\nTenant: {{tenantSlug}}\nDate: {{timestamp}}',
+  },
+  'community.mention': {
+    subject: 'You were mentioned in the community',
+    body: '{{authorName}} mentioned you in a {{#commentId}}comment{{/commentId}}{{#postId}}post{{/postId}}.',
+  },
+  'community.comment.on_post': {
+    subject: '{{actorName}} commented on your post',
+    body: '{{actorName}} commented on your post "{{postTitle}}":\n\n"{{excerpt}}"',
+  },
+  'community.reply.to_comment': {
+    subject: '{{actorName}} replied to your comment',
+    body: '{{actorName}} replied to your comment on "{{postTitle}}":\n\n"{{excerpt}}"',
+  },
+  'community.digest.weekly': {
+    subject: 'Your weekly community digest ({{mentionsCount}} mentions · {{repliesCount}} replies)',
+    body: 'This week in the community:\n\n· {{mentionsCount}} new mention(s)\n· {{repliesCount}} new replies in threads you took part in\n\nReview them all in your mentions section. Since the previous digest: {{sinceIso}}.',
+  },
+  // El asunto y el cuerpo los escribe el admin al enviar el aviso (passthrough,
+  // no hay nada que traducir ahí). Lo que SÍ es copy del producto —el enlace a
+  // la publicación y el pie de baja— se traduce aquí.
+  'community.broadcast': {
+    subject: '{{subject}}',
+    body: '{{body}}{{#postUrl}}\n\nSee the post: {{postUrl}}{{/postUrl}}{{#unsubUrl}}\n\n———\nYou receive this notice as a member of the community. To stop receiving notices, go here: {{unsubUrl}}{{/unsubUrl}}',
+  },
+  'lesson.unlocked': {
+    subject: 'Now available: {{lessonTitle}}',
+    body: 'The lesson "{{lessonTitle}}" from the course "{{courseTitle}}" is now available.',
+  },
+  'gamification.level.reached': {
+    subject: 'You reached {{levelName}}',
+    body: 'Congratulations: you have just reached the {{levelName}} level at {{tenantName}}.\n\nSee what it unlocks in the Challenges section.',
+  },
+  'gamification.challenge.approved': {
+    subject: 'Challenge completed: {{title}}',
+    body: 'We reviewed your submission for "{{title}}" and it is approved: {{points}} points for you.{{#reviewNote}}\n\nFeedback from the team: {{reviewNote}}{{/reviewNote}}\n\nThanks for documenting it and sharing it.',
+  },
+  'gamification.challenge.rejected': {
+    subject: 'Your submission for "{{title}}" needs another look',
+    body: 'We reviewed your submission for "{{title}}" and we cannot approve it yet.{{#reviewNote}}\n\nWhat is missing: {{reviewNote}}{{/reviewNote}}\n\nIf you adjust it and would like another try, get in touch.',
+  },
+  'gamification.staff.pending': {
+    subject: 'You have something to review',
+    body: '{{message}}\n\nYou will find it under Management → Points and challenges.',
+  },
+  // El resultado lo compone el emisor en `statusText`; aquí solo se enmarca.
+  'gamification.perk.handled': {
+    subject: 'About your request: {{perkTitle}}',
+    body: '{{statusText}}{{#staffNote}}\n\n{{staffNote}}{{/staffNote}}',
+  },
+  'referrals.commission.earned': {
+    subject: 'You earned a commission of {{amount}}!',
+    body: 'Your referral paid off: you earned {{amount}} from the {{baseAmount}} payment of someone who joined through your link.\n\nThe commission stays pending during the guarantee period; you can track it in your Referrals area.',
+  },
+  'referrals.payout.recorded': {
+    subject: 'We have paid you {{amount}}',
+    body: 'We have recorded the payment of your approved commissions: {{amount}}.\n\nPayment reference: {{reference}}. You have the details in your Referrals area.',
+  },
+  'zoom.class.registration.confirmed': {
+    subject: 'Registration confirmed: {{topic}}',
+    body: 'You have registered for the live class "{{topic}}" ({{startsAt}}).{{#classUrl}}\n\nWhen the time comes you will be able to join from the class page:\n{{classUrl}}{{/classUrl}}{{#calendarGoogleUrl}}\n\nSave it to your calendar so it does not slip by:\nGoogle Calendar: {{calendarGoogleUrl}}{{/calendarGoogleUrl}}{{#calendarIcsUrl}}\nOutlook, Apple and others: {{calendarIcsUrl}}{{/calendarIcsUrl}}\n\nWe will remind you again 2 hours before it starts.',
+  },
+  'zoom.class.reminder': {
+    subject: 'Your class "{{topic}}" starts in {{hoursBefore}} h',
+    body: 'Reminder: the live class "{{topic}}" starts {{startsAt}}.{{#classUrl}}\n\nJoin from the class page:\n{{classUrl}}{{/classUrl}}{{#calendarGoogleUrl}}\n\nStill not in your calendar?\nGoogle Calendar: {{calendarGoogleUrl}}{{/calendarGoogleUrl}}{{#calendarIcsUrl}}\nOutlook, Apple and others: {{calendarIcsUrl}}{{/calendarIcsUrl}}',
+  },
+  'zoom.class.cancelled': {
+    subject: 'Class cancelled: {{topic}}',
+    body: 'The live class "{{topic}}" scheduled for {{startsAt}} has been cancelled.\n\nIf it is rescheduled, you will see it again in the calendar.',
+  },
+  'surveys.post_class.invitation': {
+    subject: 'Rate the class: {{topic}}',
+    body: 'What did you think of "{{topic}}"? It takes 30 seconds and the answer is anonymous: it helps us decide what to record and what to improve.{{#surveyUrl}}\n\nAnswer from the class page:\n{{surveyUrl}}{{/surveyUrl}}',
+  },
+  'surveys.post_class.reminder': {
+    subject: 'One moment: what did you think of "{{topic}}"?',
+    body: 'Yesterday you were registered for "{{topic}}" and you have not told us what you thought yet. It takes 30 seconds and the answer is anonymous — it really helps us improve the next classes.{{#surveyUrl}}\n\nRate it from the class page:\n{{surveyUrl}}{{/surveyUrl}}\n\n(If you already rated it from another account or did not attend, please ignore this message.)',
+  },
+};
+
+/**
+ * Defaults del hub indexados por idioma. ADITIVO: `HUB_TEMPLATE_DEFAULTS` sigue
+ * exportándose tal cual y sus 16 importadores no cambian.
+ */
+export const HUB_TEMPLATE_DEFAULTS_BY_LOCALE: Record<
+  HubTemplateLang,
+  Record<string, TemplateDef>
+> = {
+  es: HUB_TEMPLATE_DEFAULTS,
+  en: HUB_TEMPLATE_DEFAULTS_EN,
+};
+
+/**
+ * Default del producto para (key, locale). Devuelve `undefined` SOLO si la key
+ * no existe en el catálogo — un idioma sin traducir nunca produce `undefined`,
+ * cae al español (`HUB_DEFAULT_LOCALE`) de forma deliberada.
+ */
+export function resolveHubDefault(key: string, locale?: string | null): TemplateDef | undefined {
+  const lang = toHubTemplateLang(locale);
+  return HUB_TEMPLATE_DEFAULTS_BY_LOCALE[lang][key] ?? HUB_TEMPLATE_DEFAULTS[key];
+}
+
+// ─── Copy FIJO de los emails (no personalizable) por idioma ─────────────────
+
+/**
+ * Copy que se añade SIEMPRE a un email y que un override per-tenant NO puede
+ * editar: etiquetas de botón CTA, títulos del bloque de marca y rellenos.
+ *
+ * Vive aquí —y no incrustado en cada composer— por la misma razón que
+ * `HUB_TEMPLATE_DEFAULTS_EN`: para que traducir un email sea tocar UN fichero y
+ * para que un test pueda comprobar que ningún idioma se queda corto. Antes de
+ * esta tabla, un destinatario con `locale = 'en-US'` recibía un cuerpo en
+ * inglés con un botón en español.
+ *
+ * La lista de idiomas es la MISMA lista cerrada del hub (`HUB_TEMPLATE_LANGS`):
+ * cualquier locale sin catálogo cae a `HUB_DEFAULT_LOCALE` vía
+ * `toHubTemplateLang`.
+ */
+export const FIXED_EMAIL_COPY = {
+  es: {
+    'cta.hub_enter': 'Entrar a {{tenantName}}',
+    'cta.manage_subscription': 'Gestionar mi suscripción',
+    'cta.password_reset': 'Restablecer contraseña',
+    'cta.set_my_password': 'Definir mi contraseña',
+    'cta.set_password': 'Define tu contraseña',
+    'cta.signin': 'Entrar',
+    'footer.hub_member': 'Recibiste este correo como miembro de {{tenantName}}.',
+    'footer.signin_hint': 'Después podrás iniciar sesión desde {{signinUrl}} con tu email.',
+    'cta.decision_approve': 'Aprobar',
+    'cta.decision_reject': 'Rechazar',
+    'label.applicant_email': 'Email',
+    'label.applicant_name': 'Nombre',
+    'label.applicant_telegram': 'Telegram ID',
+    'label.otp_code': 'Código',
+    // Bloque de decisión al aprobador (`buildDecisionEmail`). Es ESTRUCTURAL:
+    // un override del tenant edita el asunto y la intro, nunca estos rótulos.
+    'decision.delinquent': '⚠ CONSTA COMO IMPAGO',
+    'decision.membership_in_group': 'Miembro del grupo de {{tenantName}}',
+    'decision.membership_not_in_group': 'NO está en el grupo - revisar caso',
+    'decision.membership_unknown': 'Pertenencia NO verificable (error Telegram)',
+    'decision.partial_result': '⚠ Resultado parcial',
+    'decision.partial_result_html':
+      '⚠ Resultado parcial: no se pudo consultar {{count}} cuenta(s) de pago ({{names}}).',
+    'decision.partial_suffix': ' (no se pudo consultar {{count}} cuenta(s) de pago: {{names}})',
+    'decision.purchases': 'Compras detectadas ({{count}})',
+    'decision.state': 'Estado',
+    'decision.subscription_active': 'Suscripción vigente',
+    'decision.subscription_inactive': '⚠ Suscripción NO vigente (baja o impago)',
+    'decision.subscription_inactive_html': '⚠ Suscripción no vigente (baja o impago)',
+    'decision.subscription_none': 'Suscripción detectada: ninguna en las cuentas de pago conectadas.', // prettier-ignore
+    'decision.subscription_none_html': 'Sin suscripción detectada en las cuentas de pago conectadas.', // prettier-ignore
+    'decision.subscription_unverifiable':
+      '⚠ No se pudo verificar la suscripción{{suffix}}. Revisar manualmente antes de decidir.',
+    'decision.subscription_unverifiable_html':
+      '⚠ No se pudo verificar la suscripción ({{names}}). Revisar manualmente antes de decidir.',
+    'title.member_rejection': 'Sobre tu inscripción',
+    'title.member_welcome': '¡Bienvenido!',
+    'title.otp_code': 'Tu código de acceso',
+    'title.password_reset': 'Restablecer tu contraseña',
+    'title.smtp_test': 'Prueba de SMTP',
+    'title.subscriptions_digest': 'Resumen de suscripciones',
+    'value.no_upcoming_renewals': 'Ninguna en los próximos {{windowDays}} días.',
+    'value.subscription': 'Suscripción',
+    'value.unknown_tenant_slug': '(desconocido)',
+    'value.your_access': 'tu acceso',
+  },
+  en: {
+    'cta.hub_enter': 'Go to {{tenantName}}',
+    'cta.manage_subscription': 'Manage my subscription',
+    'cta.password_reset': 'Reset password',
+    'cta.set_my_password': 'Set my password',
+    'cta.set_password': 'Set your password',
+    'cta.signin': 'Sign in',
+    'footer.hub_member': 'You received this email as a member of {{tenantName}}.',
+    'footer.signin_hint': 'From then on you can sign in at {{signinUrl}} with your email.',
+    'cta.decision_approve': 'Approve',
+    'cta.decision_reject': 'Reject',
+    'label.applicant_email': 'Email',
+    'label.applicant_name': 'Name',
+    'label.applicant_telegram': 'Telegram ID',
+    'label.otp_code': 'Code',
+    'decision.delinquent': '⚠ RECORDED AS UNPAID',
+    'decision.membership_in_group': 'Member of the {{tenantName}} group',
+    'decision.membership_not_in_group': 'NOT in the group - review this case',
+    'decision.membership_unknown': 'Membership NOT verifiable (Telegram error)',
+    'decision.partial_result': '⚠ Partial result',
+    'decision.partial_result_html':
+      '⚠ Partial result: {{count}} payment account(s) could not be queried ({{names}}).',
+    'decision.partial_suffix': ' ({{count}} payment account(s) could not be queried: {{names}})',
+    'decision.purchases': 'Purchases found ({{count}})',
+    'decision.state': 'Status',
+    'decision.subscription_active': 'Active subscription',
+    'decision.subscription_inactive': '⚠ Subscription NOT active (cancelled or unpaid)',
+    'decision.subscription_inactive_html': '⚠ Subscription not active (cancelled or unpaid)',
+    'decision.subscription_none': 'Subscriptions found: none in the connected payment accounts.',
+    'decision.subscription_none_html': 'No subscription found in the connected payment accounts.',
+    'decision.subscription_unverifiable':
+      '⚠ The subscription could not be verified{{suffix}}. Review it manually before deciding.',
+    'decision.subscription_unverifiable_html':
+      '⚠ The subscription could not be verified ({{names}}). Review it manually before deciding.',
+    'title.member_rejection': 'About your registration',
+    'title.member_welcome': 'Welcome!',
+    'title.otp_code': 'Your access code',
+    'title.password_reset': 'Reset your password',
+    'title.smtp_test': 'SMTP test',
+    'title.subscriptions_digest': 'Subscriptions digest',
+    'value.no_upcoming_renewals': 'None in the next {{windowDays}} days.',
+    'value.subscription': 'Subscription',
+    'value.unknown_tenant_slug': '(unknown)',
+    'value.your_access': 'your access',
+  },
+} as const satisfies Record<HubTemplateLang, Record<string, string>>;
+
+export type FixedEmailCopyKey = keyof (typeof FIXED_EMAIL_COPY)['es'];
+
+/** Copy fijo en el idioma del destinatario. Nunca `undefined`: la key es cerrada. */
+export function resolveFixedEmailCopy(key: FixedEmailCopyKey, locale?: string | null): string {
+  return FIXED_EMAIL_COPY[toHubTemplateLang(locale)][key];
+}
+
+/**
+ * Saludo de apertura de los emails transaccionales en el idioma del
+ * destinatario. La condición es de VERACIDAD (no `trim()`) a propósito: así el
+ * español sale byte a byte igual que antes de existir esta función.
+ */
+export function emailGreeting(name: string | null | undefined, locale?: string | null): string {
+  if (toHubTemplateLang(locale) === 'en') return name ? `Hi ${name},` : 'Hi,';
+  return name ? `Hola ${name},` : 'Hola,';
+}
+
+/**
+ * Ping de diagnóstico de SMTP de `POST /tenant-settings/notifications/smtp/test`.
+ *
+ * NO está en el catálogo de `/admin/emails` a propósito: no es un email del
+ * producto que un tenant quiera personalizar, es una comprobación técnica que
+ * el admin se manda a sí mismo. Pero sí tiene que salir en SU idioma, así que
+ * el copy vive aquí, con la misma resolución por idioma que el resto.
+ *
+ * (El otro test de SMTP, el de `/admin/tenant-settings/smtp`, sí es del
+ * catálogo: es la key de hub `admin.smtp.test`.)
+ */
+export const SMTP_SETTINGS_PING: Record<HubTemplateLang, TemplateDef> = {
+  es: {
+    subject: 'Prueba de SMTP — Didacta',
+    body: 'Si recibiste este correo, la configuración SMTP de tu tenant en Didacta funciona correctamente.\n\nTenant: {{tenantSlug}}\nFecha: {{timestamp}}',
+  },
+  en: {
+    subject: 'SMTP test — Didacta',
+    body: 'If you received this email, the SMTP configuration of your tenant in Didacta is working correctly.\n\nTenant: {{tenantSlug}}\nDate: {{timestamp}}',
+  },
+};
+
+/** El ping de SMTP en el idioma del admin que lo dispara. */
+export function resolveSmtpSettingsPing(locale?: string | null): TemplateDef {
+  return SMTP_SETTINGS_PING[toHubTemplateLang(locale)];
+}
+
+/**
+ * Locale BCP-47 con el que formatear fechas dentro de un email. Los emails
+ * llevan fechas «bonitas» (`24 de julio de 2026`), y `toLocaleDateString` con
+ * `es-ES` cableado escribía esa fecha en español dentro de un email inglés.
+ *
+ * Devuelve un locale COMPLETO (no el idioma base) porque `Intl` necesita región
+ * para elegir el orden día/mes. Misma lista cerrada que el resto del catálogo:
+ * lo que no sea inglés cae a `HUB_DEFAULT_LOCALE`.
+ */
+export const EMAIL_DATE_LOCALE: Record<HubTemplateLang, string> = {
+  es: HUB_DEFAULT_LOCALE,
+  en: 'en-US',
+};
+
+/** Locale de formateo de fechas para el idioma del destinatario. */
+export function emailDateLocale(locale?: string | null): string {
+  return EMAIL_DATE_LOCALE[toHubTemplateLang(locale)];
+}
+
+/**
+ * Email de INVITACIÓN al aula (`invitation-email.ts`).
+ *
+ * NO tiene entrada en `/admin/emails` — igual que `SMTP_SETTINGS_PING`, y por
+ * la misma razón de alcance: darle una la convertiría en una plantilla
+ * personalizable per-tenant, que es una decisión de PRODUCTO y no de idioma.
+ * Aquí solo se traduce lo que ya existía.
+ *
+ * El copy vive troceado (y no como un `body` único) porque este email tiene
+ * maqueta propia: una lista ordenada de 3 pasos, una nota gris y el enlace
+ * copiable. Troceándolo, los dos idiomas comparten EXACTAMENTE la misma
+ * maqueta y el español sale byte a byte igual que antes.
+ */
+export const INVITATION_EMAIL_COPY = {
+  es: {
+    subject: '{{tenantName}} te ha invitado a su aula',
+    title: 'Tu cuenta ya está lista',
+    // `introHtml` lleva el `<strong>` de la maqueta; `{{tenantName}}` entra YA
+    // escapado (lo escapa el composer), así que interpolarlo no abre XSS.
+    introHtml:
+      '<strong>{{tenantName}}</strong> te ha invitado a su aula y <strong>tu cuenta ya está creada</strong>. No tienes que registrarte: solo elegir una contraseña para entrar por primera vez.',
+    introText:
+      '{{tenantName}} te ha invitado a su aula y tu cuenta ya está creada. No tienes que registrarte: solo elegir una contraseña para entrar por primera vez.',
+    step1: 'Pulsa el botón de abajo: te lleva directo a elegir tu contraseña.',
+    step2: 'Completa tu perfil en un par de pasos.',
+    step3: 'Listo: ya puedes entrar al aula cuando quieras.',
+    validityNote: 'Tarda menos de un minuto · el enlace es personal y vale {{validez}}.',
+    validityText: 'El enlace es personal y vale {{validez}}.',
+    linkFallback: '¿No funciona el botón? Copia este enlace en tu navegador:',
+    help: 'Si te atascas en cualquier paso, responde a este correo y te echamos una mano.',
+    cta: 'Crear mi contraseña y entrar',
+    footerNote: 'Recibes este correo porque {{tenantName}} te ha dado de alta en su aula.',
+    dayOne: 'día',
+    dayMany: 'días',
+  },
+  en: {
+    subject: '{{tenantName}} has invited you to their classroom',
+    title: 'Your account is ready',
+    introHtml:
+      '<strong>{{tenantName}}</strong> has invited you to their classroom and <strong>your account is already created</strong>. You do not have to sign up: you only have to choose a password to get in for the first time.',
+    introText:
+      '{{tenantName}} has invited you to their classroom and your account is already created. You do not have to sign up: you only have to choose a password to get in for the first time.',
+    step1: 'Press the button below: it takes you straight to choosing your password.',
+    step2: 'Complete your profile in a couple of steps.',
+    step3: 'Done: you can enter the classroom whenever you like.',
+    validityNote: 'It takes less than a minute · the link is personal and valid for {{validez}}.',
+    validityText: 'The link is personal and valid for {{validez}}.',
+    linkFallback: 'Button not working? Copy this link into your browser:',
+    help: 'If you get stuck at any step, reply to this email and we will give you a hand.',
+    cta: 'Create my password and get in',
+    footerNote:
+      'You are receiving this email because {{tenantName}} signed you up to their classroom.',
+    dayOne: 'day',
+    dayMany: 'days',
+  },
+} as const satisfies Record<HubTemplateLang, Record<string, string>>;
+
+/** Piezas de copy de la invitación, ya ensanchadas a `string` por idioma. */
+export type InvitationEmailCopy = Record<keyof (typeof INVITATION_EMAIL_COPY)['es'], string>;
+
+/** Copy de la invitación al aula en el idioma del invitado. */
+export function resolveInvitationEmailCopy(locale?: string | null): InvitationEmailCopy {
+  return INVITATION_EMAIL_COPY[toHubTemplateLang(locale)];
+}
 
 /** Metadatos de los templates del hub para la UI (nombre humano, trigger, vars). */
 const HUB_TEMPLATE_META: Record<
@@ -356,6 +784,8 @@ const HUB_TEMPLATE_META: Record<
     variables: [
       { name: 'subject', description: 'Asunto escrito por el admin' },
       { name: 'body', description: 'Mensaje escrito por el admin' },
+      { name: 'postUrl', description: 'Enlace a la publicación (vacío si el aviso no la lleva)' },
+      { name: 'unsubUrl', description: 'Enlace de baja de avisos (solo en el email)' },
       { name: 'tenantName', description: 'Nombre de la plataforma' },
     ],
   },
@@ -683,25 +1113,153 @@ export const TRANSACTIONAL_EMAIL_DEFS: EmailTemplateCatalogEntry[] = [
   },
 ];
 
-/** Catálogo completo (hub + transaccionales) para la UI admin. */
-export function buildEmailTemplateCatalog(): EmailTemplateCatalogEntry[] {
-  const hubEntries: EmailTemplateCatalogEntry[] = Object.entries(HUB_TEMPLATE_DEFAULTS).map(
-    ([key, def]) => {
-      const meta = HUB_TEMPLATE_META[key];
-      return {
-        key,
-        name: meta?.name ?? key,
-        description: meta?.description ?? '',
-        category: meta?.category ?? 'system',
-        source: 'hub',
-        channels: meta?.channels ?? ['IN_APP'],
-        defaultSubject: def.subject,
-        defaultBody: def.body,
-        variables: meta?.variables ?? [],
-      };
-    },
-  );
-  return [...TRANSACTIONAL_EMAIL_DEFS, ...hubEntries];
+/**
+ * Copy en INGLÉS de los transaccionales, indexado por la misma key.
+ *
+ * Es un mapa PARCIAL a propósito y no un espejo completo: una key ausente
+ * significa «el composer de este email todavía solo sabe redactar en español»,
+ * no un olvido. La regla de familia (composer y catálogo se tocan a la vez)
+ * exige que traducir un composer añada aquí su entrada en el mismo commit; el
+ * test de coherencia comprueba que toda key presente aquí existe en
+ * `TRANSACTIONAL_EMAIL_DEFS` y conserva sus mismos placeholders.
+ *
+ * A diferencia del español —cuyo cuerpo lo maqueta cada composer con HTML
+ * propio— el inglés se RENDERIZA desde aquí (`interpolate` + párrafos), igual
+ * que un override de tenant. Así el composer inglés y el catálogo inglés no
+ * pueden divergir: son el mismo texto.
+ *
+ * Composers que ya lo consumen:
+ *  - `auth.password_reset`                 → apps/api/src/auth/password-reset.service.ts
+ *  - `enrollment.welcome`                  → apps/api/src/enrollment/inscribe.service.ts
+ *  - `member_registration.otp_code`        → apps/api/src/modules/member-registration/email-templates.ts
+ *  - `member_registration.welcome_approved`→ idem
+ *  - `member_registration.rejection`       → idem
+ *  - `membership.welcome`                  → apps/api/src/modules/subscriptions/membership-provisioning.service.ts
+ *  - `billing.welcome`                     → apps/api/src/modules/billing/billing-provisioning.service.ts
+ *  - `subscriptions.renewal_warning`       → apps/api/src/modules/payment-connections/subscriptions-daily.worker.ts
+ *  - `payment_connections.access_expiring` → idem
+ *  - `subscriptions.admin_digest`          → idem
+ *
+ * Desde este PR NO queda ninguna key transaccional sin traducir. La última era
+ * `member_registration.approval_request`, que estaba bloqueada porque las
+ * etiquetas de estado de suscripción las redacta `classifySubscriptionStatus`
+ * en `modules/payment-connections` y traducir solo la intro habría dejado un
+ * email mitad inglés mitad español. Esa función admite ahora un idioma (con
+ * español por defecto, así que sus otros tres consumidores no cambian) y el
+ * resto del bloque estructural vive en `FIXED_EMAIL_COPY` (`decision.*`).
+ */
+export const TRANSACTIONAL_TEMPLATE_DEFAULTS_EN: Record<string, TemplateDef> = {
+  'auth.password_reset': {
+    subject: 'Reset your password at {{tenantName}}',
+    body: '{{greeting}}\n\nWe received a request to reset the password of your account at {{tenantName}}.\n\nTo set a new password, use the button below (valid for {{ttlMinutes}} minutes).\n\nIf it was not you, you can ignore this message — your current password is still intact.',
+  },
+  'enrollment.welcome': {
+    subject: 'Your access to {{tenantName}}',
+    body: '{{greeting}}\n\nYour account at {{tenantName}} has been created and you already have access to your course(s).\n\nAll that is left is to set your password with the button below (the link is valid for 7 days).\n\nYour username is {{email}}. If the link expires, use "Forgot your password?" on the sign-in screen.',
+  },
+  'member_registration.otp_code': {
+    subject: 'Your access code',
+    body: 'Your access code for {{tenantName}} is the one shown below.\n\nEnter it on the verification screen to continue. This code expires in {{ttlMinutes}} minutes.\n\nIf you did not request this access, please ignore this message.',
+  },
+  'member_registration.approval_request': {
+    subject: 'New registration pending — {{name}}',
+    body: 'There is a new registration waiting for your approval at {{tenantName}}.',
+  },
+  'member_registration.welcome_approved': {
+    subject: 'Your registration at {{tenantName}} has been approved',
+    body: '{{greeting}}\n\nGood news! Your registration at {{tenantName}} has been approved and your account is now active.',
+  },
+  'member_registration.rejection': {
+    subject: 'About your registration at {{tenantName}}',
+    body: '{{greeting}}\n\nThank you for your interest in {{tenantName}}. After reviewing your request, we have not been able to approve your registration at this time.\n\nIf you believe this is a mistake, you can get in touch with the team.',
+  },
+  'membership.welcome': {
+    subject: 'Your membership at {{tenantName}}',
+    body: '{{greeting}}\n\nYour membership at {{tenantName}} is active! You already have access to every course included.\n\nTo get in, set your password with the button below (the link is valid for 7 days).',
+  },
+  'billing.welcome': {
+    subject: 'Your course at {{tenantName}}',
+    body: '{{greeting}}\n\nYour purchase at {{tenantName}} is confirmed! We have created your account and your course is waiting for you inside.\n\nTo get in, set your password with the button below (the link is valid for 7 days).',
+  },
+  'subscriptions.renewal_warning': {
+    subject: 'Your subscription renews soon',
+    body: 'Hi,\n\nYour subscription{{#plan}} ({{plan}}){{/plan}} renews on {{renewalDate}}{{#amount}} for {{amount}}{{/amount}}.\n\n{{#cancelUrl}}If you do not want to continue, you can cancel it before that date with the button below.{{/cancelUrl}}{{^cancelUrl}}If you do not want to continue, reply to this email to cancel it before that date.{{/cancelUrl}}\n\nIf you want to carry on, you do not have to do anything.',
+  },
+  'payment_connections.access_expiring': {
+    subject: 'Your access to {{tenantName}} ends on {{renewalDate}}',
+    body: 'Hi,\n\nYour access{{#plan}} to {{plan}}{{/plan}} ends on {{renewalDate}}.\n\nUnlike a subscription, this access does not renew on its own: if you want to carry on, you will have to renew it before that date.\n\nIf you have already renewed it, you can ignore this message.',
+  },
+  'subscriptions.admin_digest': {
+    subject:
+      'Subscriptions digest — {{activeCount}} active, {{upcomingCount}} upcoming ({{windowDays}} days)',
+    body: 'Active subscriptions: {{activeCount}}\n\nRenewing/expiring soon ({{windowDays}} days):\n{{upcomingList}}',
+  },
+};
+
+/** Los transaccionales indexados por key, para resolver sin recorrer el array. */
+const TRANSACTIONAL_DEFAULTS_ES: Record<string, TemplateDef> = Object.fromEntries(
+  TRANSACTIONAL_EMAIL_DEFS.map((d) => [d.key, { subject: d.defaultSubject, body: d.defaultBody }]),
+);
+
+/**
+ * Copy por defecto de un email transaccional en el idioma pedido. Devuelve
+ * `undefined` SOLO si la key no existe en el catálogo; un idioma sin traducir
+ * cae al español (`HUB_DEFAULT_LOCALE`) de forma deliberada, igual que
+ * `resolveHubDefault`.
+ */
+export function resolveTransactionalDefault(
+  key: string,
+  locale?: string | null,
+): TemplateDef | undefined {
+  if (toHubTemplateLang(locale) === 'en') {
+    return TRANSACTIONAL_TEMPLATE_DEFAULTS_EN[key] ?? TRANSACTIONAL_DEFAULTS_ES[key];
+  }
+  return TRANSACTIONAL_DEFAULTS_ES[key];
+}
+
+/**
+ * Catálogo completo (hub + transaccionales) para la UI admin.
+ *
+ * `locale` es el idioma del OVERRIDE que el admin va a escribir, no el de la
+ * pantalla: `/admin/emails` deja elegir (canal, idioma) y prefillea el editor
+ * con el default del producto para ese par. Sin este parámetro el prefill salía
+ * SIEMPRE en español, así que crear un override `en-US` empezaba copiando y
+ * borrando un texto español.
+ *
+ * CAMINO DEGRADADO: `locale` ausente o sin catálogo cae a `HUB_DEFAULT_LOCALE`
+ * vía `resolveHubDefault` / `resolveTransactionalDefault`. Omitirlo devuelve
+ * byte a byte la respuesta de antes — es el default nombrado del producto, no
+ * un accidente, y por eso los clientes viejos siguen viendo lo mismo.
+ *
+ * `name`, `description` y `category` NO se traducen todavía: son metadatos de
+ * la UI del catálogo (36 entradas) y viven en `HUB_TEMPLATE_META` /
+ * `TRANSACTIONAL_EMAIL_DEFS` solo en español. Es un hueco conocido y aparte.
+ */
+export function buildEmailTemplateCatalog(locale?: string | null): EmailTemplateCatalogEntry[] {
+  const hubEntries: EmailTemplateCatalogEntry[] = Object.keys(HUB_TEMPLATE_DEFAULTS).map((key) => {
+    const meta = HUB_TEMPLATE_META[key];
+    // Nunca `undefined`: la key sale de HUB_TEMPLATE_DEFAULTS, que es el
+    // último fallback de `resolveHubDefault`.
+    const def = resolveHubDefault(key, locale)!;
+    return {
+      key,
+      name: meta?.name ?? key,
+      description: meta?.description ?? '',
+      category: meta?.category ?? 'system',
+      source: 'hub',
+      channels: meta?.channels ?? ['IN_APP'],
+      defaultSubject: def.subject,
+      defaultBody: def.body,
+      variables: meta?.variables ?? [],
+    };
+  });
+  const transactional: EmailTemplateCatalogEntry[] = TRANSACTIONAL_EMAIL_DEFS.map((entry) => {
+    const def = resolveTransactionalDefault(entry.key, locale);
+    // Sin traducción para esa key, `resolveTransactionalDefault` devuelve el
+    // español, que es exactamente lo que ya traía la entrada.
+    return def ? { ...entry, defaultSubject: def.subject, defaultBody: def.body } : entry;
+  });
+  return [...transactional, ...hubEntries];
 }
 
 /** Todas las keys conocidas (hub + transaccionales), para /templates/keys. */
@@ -726,24 +1284,39 @@ export interface TemplateOverridePrisma {
 
 /**
  * Busca el override per-tenant de un email transaccional: (tenantId, key,
- * channel EMAIL, locale es-ES). Best-effort: cualquier error devuelve null y
+ * channel EMAIL, locale). Best-effort: cualquier error devuelve null y
  * el email sale con su copy por defecto — la personalización NUNCA rompe un
  * envío. La interpolación la hace el composer, que conoce las variables.
+ *
+ * `locale` es opcional y por defecto `HUB_DEFAULT_LOCALE`: un composer que
+ * todavía no sepa el idioma del destinatario lo omite y busca exactamente la
+ * misma fila que antes (una sola consulta, comportamiento byte a byte).
+ *
+ * Cuando el composer SÍ sabe el idioma, la precedencia es la MISMA que la de
+ * `renderForTenant` en el hub: primero la fila del idioma pedido y, si no
+ * existe, la del idioma de referencia. Un tenant que solo personalizó el correo
+ * en español no pierde su personalización porque el destinatario esté en
+ * inglés — el copy que el tenant escribió gana al default del producto, igual
+ * que en el hub.
  */
 export async function fetchEmailOverride(
   prisma: TemplateOverridePrisma,
   tenantId: string,
   key: string,
+  locale: string = HUB_DEFAULT_LOCALE,
 ): Promise<RawEmailOverride | null> {
+  const locales = locale === HUB_DEFAULT_LOCALE ? [locale] : [locale, HUB_DEFAULT_LOCALE];
   try {
-    const row = await prisma.notificationTemplate.findUnique({
-      where: {
-        tenantId_key_channel_locale: { tenantId, key, channel: 'EMAIL', locale: 'es-ES' },
-      },
-      select: { subject: true, body: true },
-    });
-    if (!row) return null;
-    return { subject: row.subject, body: row.body };
+    for (const candidate of locales) {
+      const row = await prisma.notificationTemplate.findUnique({
+        where: {
+          tenantId_key_channel_locale: { tenantId, key, channel: 'EMAIL', locale: candidate },
+        },
+        select: { subject: true, body: true },
+      });
+      if (row) return { subject: row.subject, body: row.body };
+    }
+    return null;
   } catch {
     return null;
   }

@@ -1,6 +1,9 @@
-import { HttpException, NotFoundException } from '@nestjs/common';
+import { HttpException, Logger, NotFoundException } from '@nestjs/common';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ModuleRouterService } from '../../src/marketplace/module-router.service';
+import {
+  ModuleRouterService,
+  type ModuleRouteRequestContext,
+} from '../../src/marketplace/module-router.service';
 import { ModulesDispatcherController } from '../../src/marketplace/modules-dispatcher.controller';
 import { RateLimiterService } from '../../src/marketplace/rate-limiter.service';
 import { SandboxedDbService } from '../../src/marketplace/sandboxed-db.service';
@@ -119,6 +122,9 @@ const secretsFactory = {
 } as any;
 const moduleRegistry = {} as any;
 const contextFactory = {} as any;
+const tenantResolver = {
+  resolveTenantWebBaseUrl: vi.fn(async () => 'http://test.local'),
+} as any;
 
 afterEach(() => {
   rateLimiter.reset();
@@ -127,7 +133,7 @@ afterEach(() => {
 describe('ModulesDispatcherController.dispatch', () => {
   it('despacha al handler registrado y devuelve su body', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async (ctx: any) => ({
+    const handler = vi.fn(async (ctx: ModuleRouteRequestContext) => ({
       status: 200,
       body: { from: ctx.params.id },
     }));
@@ -147,6 +153,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/items/42',
@@ -176,6 +183,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({ url: '/api/v1/modules/ghost/foo' });
     const { reply } = makeReply();
@@ -184,7 +192,7 @@ describe('ModulesDispatcherController.dispatch', () => {
 
   it('passes query, body y user al handler cuando el Bearer es válido', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule('mod.example', '/modules/example', [
       { method: 'POST', path: '/echo', handler },
     ]);
@@ -201,6 +209,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/echo?a=1',
@@ -212,15 +221,15 @@ describe('ModulesDispatcherController.dispatch', () => {
 
     await ctrl.dispatch(req, reply, { hello: 'world' });
 
-    const ctx = handler.mock.calls[0][0];
-    expect(ctx.query).toEqual({ a: '1' });
-    expect(ctx.body).toEqual({ hello: 'world' });
-    expect(ctx.user).toEqual({ sub: 'u-1', tenantId: 't-1', roles: ['formador'] });
+    const ctx = handler.mock.calls[0]![0];
+    expect(ctx!.query).toEqual({ a: '1' });
+    expect(ctx!.body).toEqual({ hello: 'world' });
+    expect(ctx!.user).toEqual({ sub: 'u-1', tenantId: 't-1', roles: ['formador'] });
   });
 
   it('user=null si no hay header Authorization', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule('mod.example', '/modules/example', [
       { method: 'GET', path: '/public', handler },
     ]);
@@ -236,16 +245,17 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({ url: '/api/v1/modules/example/public' });
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
-    expect(handler.mock.calls[0][0].user).toBeNull();
+    expect(handler.mock.calls[0]![0]!.user).toBeNull();
   });
 
   it('user=null si el Bearer es inválido (no rompe la request)', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule('mod.example', '/modules/example', [
       { method: 'GET', path: '/public', handler },
     ]);
@@ -261,6 +271,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/public',
@@ -268,12 +279,12 @@ describe('ModulesDispatcherController.dispatch', () => {
     });
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
-    expect(handler.mock.calls[0][0].user).toBeNull();
+    expect(handler.mock.calls[0]![0]!.user).toBeNull();
   });
 
   it('user=null si el header no empieza con "Bearer "', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule('mod.example', '/modules/example', [
       { method: 'GET', path: '/public', handler },
     ]);
@@ -289,6 +300,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/public',
@@ -296,12 +308,12 @@ describe('ModulesDispatcherController.dispatch', () => {
     });
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
-    expect(handler.mock.calls[0][0].user).toBeNull();
+    expect(handler.mock.calls[0]![0]!.user).toBeNull();
   });
 
   it('user=null si "Bearer " va seguido de string vacío', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule('mod.example', '/modules/example', [
       { method: 'GET', path: '/public', handler },
     ]);
@@ -318,6 +330,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/public',
@@ -325,7 +338,7 @@ describe('ModulesDispatcherController.dispatch', () => {
     });
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
-    expect(handler.mock.calls[0][0].user).toBeNull();
+    expect(handler.mock.calls[0]![0]!.user).toBeNull();
     // Y NO debe haber intentado verificar un token vacío.
     expect(tokens.verifyAccess as any).not.toHaveBeenCalled();
   });
@@ -354,6 +367,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/boom',
@@ -389,6 +403,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/with-headers',
@@ -418,6 +433,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/x',
@@ -436,7 +452,7 @@ describe('ModulesDispatcherController.dispatch', () => {
   // la salida HTTP en el manifest antes de poder usarla.
   it('módulo sin manifest.http → ctx.http es BlockedSandboxedHttp', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule('mod.example', '/modules/example', [
       { method: 'GET', path: '/probe', handler },
     ]);
@@ -453,6 +469,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/probe',
@@ -461,11 +478,11 @@ describe('ModulesDispatcherController.dispatch', () => {
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
 
-    const ctx = handler.mock.calls[0][0];
-    expect(typeof ctx.http?.get).toBe('function');
-    expect(typeof ctx.http?.post).toBe('function');
+    const ctx = handler.mock.calls[0]![0];
+    expect(typeof ctx!.http?.get).toBe('function');
+    expect(typeof ctx!.http?.post).toBe('function');
 
-    await expect(ctx.http.get('https://api.zoom.us/x')).rejects.toMatchObject({
+    await expect(ctx!.http.get('https://api.zoom.us/x')).rejects.toMatchObject({
       name: 'HttpError',
       code: 'HTTP_BLOCKED_HOST',
     });
@@ -477,7 +494,7 @@ describe('ModulesDispatcherController.dispatch', () => {
   // de la allowlist devuelve HTTP_BLOCKED_HOST (no Noop, no garbage).
   it('módulo con manifest.http restrictivo → ctx.http aplica allowlist', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule(
       'mod.zoom',
       '/modules/zoom',
@@ -503,6 +520,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/zoom/probe',
@@ -511,9 +529,9 @@ describe('ModulesDispatcherController.dispatch', () => {
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
 
-    const ctx = handler.mock.calls[0][0];
+    const ctx = handler.mock.calls[0]![0];
     // Host fuera de allowlist → HTTP_BLOCKED_HOST
-    await expect(ctx.http.get('https://otro.host.com/x')).rejects.toMatchObject({
+    await expect(ctx!.http.get('https://otro.host.com/x')).rejects.toMatchObject({
       code: 'HTTP_BLOCKED_HOST',
     });
   });
@@ -525,7 +543,7 @@ describe('ModulesDispatcherController.dispatch', () => {
   // scoped al tablePrefix + tenantId del request.
   it('módulo sin requiresDb → ctx.db es BlockedSandboxedDb', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule('mod.example', '/modules/example', [
       { method: 'GET', path: '/probe', handler },
     ]);
@@ -542,6 +560,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/probe',
@@ -550,12 +569,12 @@ describe('ModulesDispatcherController.dispatch', () => {
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
 
-    const ctx = handler.mock.calls[0][0];
-    expect(typeof ctx.db?.query).toBe('function');
-    expect(typeof ctx.db?.execute).toBe('function');
-    expect(typeof ctx.db?.transaction).toBe('function');
+    const ctx = handler.mock.calls[0]![0];
+    expect(typeof ctx!.db?.query).toBe('function');
+    expect(typeof ctx!.db?.execute).toBe('function');
+    expect(typeof ctx!.db?.transaction).toBe('function');
 
-    await expect(ctx.db.query('SELECT 1 FROM mod_example_jobs')).rejects.toMatchObject({
+    await expect(ctx!.db.query('SELECT 1 FROM mod_example_jobs')).rejects.toMatchObject({
       name: 'DbError',
       code: 'DB_PREFIX_VIOLATION',
       message: expect.stringContaining('requiresDb'),
@@ -564,7 +583,7 @@ describe('ModulesDispatcherController.dispatch', () => {
 
   it('módulo con requiresDb=true → ctx.db ejecuta queries scoped (con SQL guard activo)', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule(
       'mod.example',
       '/modules/example',
@@ -587,6 +606,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/probe',
@@ -595,14 +615,14 @@ describe('ModulesDispatcherController.dispatch', () => {
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
 
-    const ctx = handler.mock.calls[0][0];
+    const ctx = handler.mock.calls[0]![0];
     // Query dentro del prefix → pasa el guard, llega al fakePrisma stub.
-    await expect(ctx.db.query('SELECT * FROM mod_example_jobs')).resolves.toEqual({
+    await expect(ctx!.db.query('SELECT * FROM mod_example_jobs')).resolves.toEqual({
       rows: [],
       rowCount: 0,
     });
     // Query fuera del prefix → DB_PREFIX_VIOLATION (SQL guard).
-    await expect(ctx.db.query('SELECT * FROM "user"')).rejects.toMatchObject({
+    await expect(ctx!.db.query('SELECT * FROM "user"')).rejects.toMatchObject({
       code: 'DB_PREFIX_VIOLATION',
     });
   });
@@ -613,7 +633,7 @@ describe('ModulesDispatcherController.dispatch', () => {
 
   it('módulo SIN bloque didacta → ctx.didacta rechaza con DIDACTA_PERMISSION_DENIED', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule('mod.example', '/modules/example', [
       { method: 'GET', path: '/probe', handler },
     ]);
@@ -630,6 +650,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/probe',
@@ -638,11 +659,11 @@ describe('ModulesDispatcherController.dispatch', () => {
     const { reply } = makeReply();
     await ctrl.dispatch(req, reply, undefined);
 
-    const ctx = handler.mock.calls[0][0];
-    expect(typeof ctx.didacta?.users?.upsertByExternalRef).toBe('function');
+    const ctx = handler.mock.calls[0]![0];
+    expect(typeof ctx!.didacta?.users?.upsertByExternalRef).toBe('function');
 
     await expect(
-      ctx.didacta.users.upsertByExternalRef({
+      ctx!.didacta.users.upsertByExternalRef({
         externalSource: 'learndash',
         externalId: '1',
         email: 'a@b.com',
@@ -656,7 +677,7 @@ describe('ModulesDispatcherController.dispatch', () => {
 
   it('módulo CON bloque didacta → llamada llega al ScopedDidactaApiFactory.build (con permisos)', async () => {
     const router = new ModuleRouterService();
-    const handler = vi.fn(async () => ({ status: 200, body: 'ok' }));
+    const handler = vi.fn(async (_ctx: ModuleRouteRequestContext) => ({ status: 200, body: 'ok' }));
     router.registerModule(
       'mod.example',
       '/modules/example',
@@ -670,11 +691,15 @@ describe('ModulesDispatcherController.dispatch', () => {
     );
     // Stub: factory.build devuelve un cliente de prueba que graba la
     // invocación. Verifica que el dispatcher pasó moduleId + didactaConfig.
-    const buildSpy = vi.fn(() => ({
-      users: {
-        upsertByExternalRef: vi.fn(async () => ({ id: 'u-1' }) as any),
-      },
-    }));
+    // El doble declara los parámetros reales de `DidactaApiFactory.build()`
+    // (moduleId, didactaConfig, coreServices) para poder afirmar sobre ellos.
+    const buildSpy = vi.fn(
+      (_moduleId: string, _didactaConfig: unknown, _coreServices?: unknown) => ({
+        users: {
+          upsertByExternalRef: vi.fn(async () => ({ id: 'u-1' }) as any),
+        },
+      }),
+    );
     const fakeFactory = { build: buildSpy } as any;
     const ctrl = new ModulesDispatcherController(
       router,
@@ -688,6 +713,7 @@ describe('ModulesDispatcherController.dispatch', () => {
       moduleRegistry,
       contextFactory,
       tenantContext,
+      tenantResolver,
     );
     const req = makeReq({
       url: '/api/v1/modules/example/probe',
@@ -697,10 +723,104 @@ describe('ModulesDispatcherController.dispatch', () => {
     await ctrl.dispatch(req, reply, undefined);
 
     expect(buildSpy).toHaveBeenCalledTimes(1);
-    expect(buildSpy.mock.calls[0][0]).toBe('mod.example');
-    expect(buildSpy.mock.calls[0][1]).toEqual({
+    expect(buildSpy.mock.calls[0]![0]).toBe('mod.example');
+    expect(buildSpy.mock.calls[0]![1]).toEqual({
       externalSource: 'learndash',
       permissions: ['users.upsertByExternalRef'],
     });
+  });
+});
+
+/// MUST-FIX 26 — el dispatcher deja de reenviar al cliente el `err.message`
+/// crudo del handler de un módulo third-party.
+///
+/// El mensaje lo escribe código que NO es nuestro y que se instala desde el
+/// marketplace: puede llevar SQL, rutas de fichero, la respuesta de una API
+/// externa o un secreto interpolado por descuido del módulo. Como muchas
+/// rutas del dispatcher son anónimas (ver la decodificación opcional del
+/// Bearer arriba), ese detalle no puede viajar en la respuesta.
+///
+/// Un módulo que quiera comunicar algo al usuario final no debe lanzar:
+/// devuelve `{ status, body }` desde el handler, que sí se envía tal cual
+/// (cubierto por los tests de despacho de arriba).
+describe('ModulesDispatcherController · saneado del error del handler', () => {
+  /// Mensaje de un módulo que filtra a la vez red interna, SQL y un secreto.
+  const LEAKY = 'connect ECONNREFUSED 10.0.0.7:5432 — SELECT * FROM wp_users; secret=sk_live_abc';
+
+  function makeDispatcher(handler: () => Promise<never>): ModulesDispatcherController {
+    const router = new ModuleRouterService();
+    router.registerModule('mod.example', '/modules/example', [
+      { method: 'GET', path: '/probe', handler },
+    ]);
+    return new ModulesDispatcherController(
+      router,
+      makeTokens({ [VALID_TOKEN]: claims() }),
+      httpSvc,
+      rateLimiter,
+      dbSvc,
+      didactaFactory,
+      jobsFactory,
+      secretsFactory,
+      moduleRegistry,
+      contextFactory,
+      tenantContext,
+      tenantResolver,
+    );
+  }
+
+  it('el cliente recibe un mensaje genérico con su code y el detalle va al log', async () => {
+    const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const ctrl = makeDispatcher(async () => {
+      throw new Error(LEAKY);
+    });
+    const req = makeReq({
+      url: '/api/v1/modules/example/probe',
+      headers: { authorization: `Bearer ${VALID_TOKEN}` },
+    });
+    const { reply } = makeReply();
+
+    const thrown: unknown = await ctrl.dispatch(req, reply, undefined).catch((e: unknown) => e);
+
+    // (a) el cliente no ve nada del error original
+    expect(thrown).toBeInstanceOf(HttpException);
+    const body = (thrown as HttpException).getResponse();
+    expect((thrown as HttpException).getStatus()).toBe(500);
+    expect(body).toEqual({
+      message: 'El módulo no pudo completar la operación.',
+      code: 'MARKETPLACE_MODULE_HANDLER_ERROR',
+    });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('ECONNREFUSED');
+    expect(serialized).not.toContain('10.0.0.7');
+    expect(serialized).not.toContain('wp_users');
+    expect(serialized).not.toContain('sk_live_abc');
+
+    // (b) el detalle sí queda en el log, con módulo, tenant y operación
+    const logged = errorSpy.mock.calls.flat().map(String).join('\n');
+    expect(logged).toContain(LEAKY);
+    expect(logged).toContain('module=mod.example');
+    expect(logged).toContain('tenant=t-1');
+    expect(logged).toContain('operation=GET /modules/example/probe');
+
+    errorSpy.mockRestore();
+  });
+
+  it('un throw que no es Error tampoco filtra su contenido', async () => {
+    const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const ctrl = makeDispatcher(async () => {
+      throw 'DB_PASSWORD=hunter2' as never;
+    });
+    const req = makeReq({ url: '/api/v1/modules/example/probe' });
+    const { reply } = makeReply();
+
+    const thrown: unknown = await ctrl.dispatch(req, reply, undefined).catch((e: unknown) => e);
+
+    expect(JSON.stringify((thrown as HttpException).getResponse())).not.toContain('hunter2');
+    const logged = errorSpy.mock.calls.flat().map(String).join('\n');
+    expect(logged).toContain('hunter2');
+    // Ruta anónima: el log lo deja explícito en lugar de un tenant vacío.
+    expect(logged).toContain('tenant=anónimo');
+
+    errorSpy.mockRestore();
   });
 });

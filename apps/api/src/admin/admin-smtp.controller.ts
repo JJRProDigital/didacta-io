@@ -31,11 +31,27 @@ import {
   type BrandingPrisma,
 } from '../common/branded-email';
 import {
-  HUB_TEMPLATE_DEFAULTS,
+  HUB_DEFAULT_LOCALE,
   interpolate,
+  resolveFixedEmailCopy,
+  resolveHubDefault,
+  resolveRecipientLocale,
+  toHubTemplateLang,
 } from '../modules/notifications/email-template-catalog';
 
 const ADMIN_ROLES = new Set(['super_admin', 'tenant_admin']);
+
+/**
+ * Relleno del `message` cuando el MTA rechaza el envío SIN devolver texto.
+ * En ese caso NO se manda `detail`: el front detecta su ausencia y pinta el
+ * `message` crudo en vez de una frase traducida con el hueco vacío. Es el
+ * único camino en que un admin anglófono ve español aquí, y es deliberado:
+ * no hay diagnóstico que traducir.
+ */
+const SMTP_NO_DETAIL = 'sin detalle';
+
+/** Key del catálogo del hub que corresponde al email de prueba de SMTP. */
+const SMTP_TEST_TEMPLATE_KEY = 'admin.smtp.test';
 
 /**
  * Body del PUT /admin/tenant-settings/smtp. `password` opcional: si no se
@@ -73,6 +89,12 @@ const TemplateTestSchema = z.object({
   templateKey: z.string().trim().min(1).max(120),
   /** Variables de la plantilla. Las que falten se quedan vacías. */
   variables: z.record(z.string()).optional(),
+  /**
+   * Idioma a previsualizar (ej. `en-US`). Si se omite, el de referencia del
+   * producto. Se resuelve con la MISMA precedencia que usa el hub al enviar,
+   * para que la vista previa no mienta sobre lo que recibirá el miembro.
+   */
+  locale: z.string().trim().min(2).max(35).optional(),
 });
 
 interface SmtpResponseDto {
@@ -95,7 +117,10 @@ function requireAdmin(user: SessionClaims | undefined): SessionClaims {
   if (!user) throw new UnauthorizedException();
   const isAdmin = user.roles.some((r) => ADMIN_ROLES.has(r));
   if (!isAdmin) {
-    throw new ForbiddenException('Solo super_admin o tenant_admin pueden gestionar SMTP');
+    throw new ForbiddenException({
+      message: 'Solo super_admin o tenant_admin pueden gestionar SMTP',
+      code: 'ADMIN_SMTP_FORBIDDEN',
+    });
   }
   return user;
 }
@@ -173,9 +198,11 @@ export class AdminSmtpController {
     const finalPassword =
       body.password && body.password.length > 0 ? body.password : existingPassword;
     if (!finalPassword) {
-      throw new BadRequestException(
-        'Falta password: no hay password previo guardado o no se pudo descifrar. Envía uno nuevo en el body.',
-      );
+      throw new BadRequestException({
+        message:
+          'Falta password: no hay password previo guardado o no se pudo descifrar. Envía uno nuevo en el body.',
+        code: 'ADMIN_SMTP_PASSWORD_REQUIRED',
+      });
     }
 
     const secret = {
@@ -224,9 +251,10 @@ export class AdminSmtpController {
 
     const resolved = await this.resolver.resolveTenantOnly(claims.tenantId);
     if (!resolved) {
-      throw new BadRequestException(
-        'SMTP no configurado para este tenant — guarda credenciales antes de probar.',
-      );
+      throw new BadRequestException({
+        message: 'SMTP no configurado para este tenant — guarda credenciales antes de probar.',
+        code: 'ADMIN_SMTP_NOT_CONFIGURED',
+      });
     }
 
     const tenant = await this.prisma.tenant.findUnique({
@@ -239,13 +267,22 @@ export class AdminSmtpController {
       claims.tenantId,
       process.env['WEB_PUBLIC_URL']?.trim() ?? '',
     );
-    const subject = `Prueba de SMTP — ${branding.tenantName}`;
-    const bodyText =
-      `Si recibiste este correo, la configuración SMTP de ${branding.tenantName} funciona correctamente.\n\n` +
-      `Tenant: ${tenant?.slug ?? '(desconocido)'}\n` +
-      `Fecha: ${new Date().toISOString()}`;
+    // El email de prueba sale en el idioma del ADMIN que lo dispara: es él
+    // quien lo va a leer para comprobar que el SMTP funciona. La key
+    // `admin.smtp.test` ya vive en el catálogo del hub traducida a los dos
+    // idiomas, así que aquí no se redacta copy: se resuelve e interpola.
+    const locale = await this.resolveActorLocale(claims.tenantId, claims.sub);
+    const def = resolveHubDefault(SMTP_TEST_TEMPLATE_KEY, locale)!;
+    const vars = {
+      tenantName: branding.tenantName,
+      tenantSlug: tenant?.slug ?? resolveFixedEmailCopy('value.unknown_tenant_slug', locale),
+      timestamp: new Date().toISOString(),
+    };
+    const subject = interpolate(def.subject ?? '', vars);
+    const bodyText = interpolate(def.body, vars);
     const { html, text } = renderBrandedEmail(branding, {
-      title: 'Prueba de SMTP',
+      lang: toHubTemplateLang(locale),
+      title: resolveFixedEmailCopy('title.smtp_test', locale),
       bodyHtml: textToHtmlParagraphs(bodyText),
       bodyText,
     });
@@ -258,7 +295,14 @@ export class AdminSmtpController {
     if (!result.ok) {
       // El error real del MTA (auth failed, host inválido, etc.) viaja en
       // la respuesta para que el admin pueda diagnosticar — no es secreto.
-      throw new BadRequestException(`SMTP falló: ${result.error ?? 'sin detalle'}`);
+      // `detail` va aparte del `message` para que el front lo pueda enmarcar
+      // en su idioma en vez de perderlo al traducir el `code` (ver
+      // `CODES_WITH_DETAIL` en apps/web/src/lib/i18n/api-error.ts).
+      throw new BadRequestException({
+        message: `SMTP falló: ${result.error ?? SMTP_NO_DETAIL}`,
+        code: 'ADMIN_SMTP_TEST_FAILED',
+        ...(result.error ? { detail: result.error } : {}),
+      });
     }
 
     // Marca verificado: actualiza meta sin tocar las credenciales.
@@ -298,23 +342,48 @@ export class AdminSmtpController {
     // que se quiere probar es el email, no las credenciales del tenant.
     const resolved = await this.resolver.resolve(claims.tenantId);
     if (!resolved) {
-      throw new BadRequestException('No hay SMTP configurado ni en el tenant ni en el despliegue.');
+      throw new BadRequestException({
+        message: 'No hay SMTP configurado ni en el tenant ni en el despliegue.',
+        code: 'ADMIN_SMTP_NOT_CONFIGURED_ANYWHERE',
+      });
     }
 
     const variables = body.variables ?? {};
-    const override = await this.prisma.notificationTemplate.findUnique({
-      where: {
-        tenantId_key_channel_locale: {
-          tenantId: claims.tenantId,
-          key: body.templateKey,
-          channel: 'EMAIL',
-          locale: 'es-ES',
+    const locale = body.locale ?? HUB_DEFAULT_LOCALE;
+    // Misma precedencia que `renderForTenant` del hub: override en el locale
+    // pedido → override en el de referencia → default del producto. Si el
+    // tenant solo personalizó el español, la vista previa en inglés enseña ese
+    // override, que es exactamente lo que saldría por correo.
+    const override =
+      (await this.prisma.notificationTemplate.findUnique({
+        where: {
+          tenantId_key_channel_locale: {
+            tenantId: claims.tenantId,
+            key: body.templateKey,
+            channel: 'EMAIL',
+            locale,
+          },
         },
-      },
-    });
-    const fallback = HUB_TEMPLATE_DEFAULTS[body.templateKey];
+      })) ??
+      (locale !== HUB_DEFAULT_LOCALE
+        ? await this.prisma.notificationTemplate.findUnique({
+            where: {
+              tenantId_key_channel_locale: {
+                tenantId: claims.tenantId,
+                key: body.templateKey,
+                channel: 'EMAIL',
+                locale: HUB_DEFAULT_LOCALE,
+              },
+            },
+          })
+        : null);
+    const fallback = resolveHubDefault(body.templateKey, locale);
     if (!override && !fallback) {
-      throw new BadRequestException(`No existe la plantilla "${body.templateKey}".`);
+      throw new BadRequestException({
+        message: `No existe la plantilla "${body.templateKey}".`,
+        code: 'ADMIN_SMTP_TEMPLATE_NOT_FOUND',
+        detail: body.templateKey,
+      });
     }
 
     const branding = await resolveEmailBranding(
@@ -332,6 +401,7 @@ export class AdminSmtpController {
     const bodyText = interpolate(rawBody, vars);
 
     const { html, text } = renderBrandedEmail(branding, {
+      lang: toHubTemplateLang(locale),
       title: subject ?? branding.tenantName,
       bodyHtml: textToHtmlParagraphs(bodyText),
       bodyText,
@@ -345,12 +415,43 @@ export class AdminSmtpController {
       );
 
     if (!result.ok) {
-      throw new BadRequestException(`SMTP falló: ${result.error ?? 'sin detalle'}`);
+      throw new BadRequestException({
+        message: `SMTP falló: ${result.error ?? SMTP_NO_DETAIL}`,
+        code: 'ADMIN_SMTP_TEST_FAILED',
+        ...(result.error ? { detail: result.error } : {}),
+      });
     }
     this.logger.log(
       `Prueba de plantilla "${body.templateKey}" enviada a ${body.toEmail} (tenant ${claims.tenantId})`,
     );
     return { ok: true, sentTo: body.toEmail, subject, messageId: result.messageId };
+  }
+
+  /**
+   * Idioma del admin que dispara la prueba, leído de su fila de `user`.
+   *
+   * DOS caminos degradados, los dos a `HUB_DEFAULT_LOCALE` y a propósito:
+   *  (a) la consulta falla o el actor no tiene fila en este tenant (sesión de
+   *      un usuario borrado entre el login y el click) — no hay a quién
+   *      preguntarle el idioma y la prueba de SMTP no se aborta por eso;
+   *  (b) la fila existe pero `locale` viene vacío, que es lo que absorbe
+   *      `resolveRecipientLocale`.
+   * Ninguno rompe el envío: el email de prueba tiene que salir igual.
+   */
+  private async resolveActorLocale(tenantId: string, userId: string): Promise<string> {
+    try {
+      const actor = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { locale: true, tenantId: true },
+      });
+      if (!actor || actor.tenantId !== tenantId) return HUB_DEFAULT_LOCALE;
+      return resolveRecipientLocale(actor.locale);
+    } catch (err) {
+      this.logger.warn(
+        `[admin-smtp] no se pudo leer el idioma del admin ${userId}, se usa ${HUB_DEFAULT_LOCALE}: ${(err as Error).message.slice(0, 200)}`,
+      );
+      return HUB_DEFAULT_LOCALE;
+    }
   }
 
   private async readDto(tenantId: string): Promise<SmtpResponseDto> {

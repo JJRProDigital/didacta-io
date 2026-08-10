@@ -19,6 +19,7 @@
 /// un solo camino).
 
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,6 +28,8 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { adminSmtpApi } from '@/lib/admin-smtp';
 import { ApiHttpError } from '@/lib/api-client';
+import { apiErrorMessage } from '@/lib/i18n/api-error';
+import { labelOr } from '@/lib/i18n/labels';
 import {
   adminNotificationsApi,
   type EmailTemplateCatalogEntry,
@@ -35,25 +38,31 @@ import {
   type NotificationTemplateOverride,
 } from './admin-client';
 
+/**
+ * Idiomas que el tenant puede personalizar. Los nombres son ENDÓNIMOS (cada
+ * idioma en el suyo), así que no pasan por el catálogo: «Español» se escribe
+ * igual mire quien mire.
+ */
 const SUPPORTED_LOCALES = [
   { code: 'es-ES', label: 'Español' },
   { code: 'en-US', label: 'English' },
 ] as const;
 
-const CHANNEL_LABEL: Record<NotificationChannel, string> = {
-  EMAIL: 'Email',
-  IN_APP: 'In-app',
-  WEBHOOK: 'Webhook',
-};
+/**
+ * Idioma de referencia del producto (espejo de `HUB_DEFAULT_LOCALE` en la API).
+ * Es el que se abre por defecto en el editor y el destino de cualquier camino
+ * degradado: nunca un `undefined` implícito.
+ */
+const REFERENCE_LOCALE = 'es-ES';
 
-/** Orden y nombre de las secciones del catálogo. */
-const CATEGORY_ORDER: Array<{ key: EmailTemplateCategory; label: string }> = [
-  { key: 'account', label: 'Cuenta y acceso' },
-  { key: 'members', label: 'Inscripción de miembros' },
-  { key: 'billing', label: 'Membresía y pagos' },
-  { key: 'learning', label: 'Aprendizaje' },
-  { key: 'community', label: 'Comunidad' },
-  { key: 'system', label: 'Sistema' },
+/** Orden de las secciones del catálogo; el nombre sale de `category.*`. */
+const CATEGORY_ORDER: EmailTemplateCategory[] = [
+  'account',
+  'members',
+  'billing',
+  'learning',
+  'community',
+  'system',
 ];
 
 interface EditorState {
@@ -78,7 +87,17 @@ function findOverride(
 }
 
 export function EmailTemplatesManager() {
+  const t = useTranslations('modNotifications');
+  const tErrors = useTranslations('errors');
   const [catalog, setCatalog] = useState<EmailTemplateCatalogEntry[] | null>(null);
+  /**
+   * Copy por defecto del producto POR IDIOMA. El listado de la pantalla usa el
+   * de referencia (`catalog`); el editor usa el del idioma que se está
+   * personalizando.
+   */
+  const [catalogByLocale, setCatalogByLocale] = useState<
+    Record<string, EmailTemplateCatalogEntry[]>
+  >({});
   const [overrides, setOverrides] = useState<NotificationTemplateOverride[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -89,15 +108,22 @@ export function EmailTemplatesManager() {
 
   async function reload() {
     try {
-      const [cat, list] = await Promise.all([
-        adminNotificationsApi.getCatalog(),
+      // Un catálogo por idioma personalizable (hoy 2). Se piden juntos: el
+      // editor necesita el copy por defecto del idioma que se elija SIN que la
+      // pantalla se quede esperando a mitad de una edición.
+      const [porIdioma, list] = await Promise.all([
+        Promise.all(
+          SUPPORTED_LOCALES.map(async (l) => [l.code, await adminNotificationsApi.getCatalog(l.code)] as const), // prettier-ignore
+        ),
         adminNotificationsApi.listOverrides(),
       ]);
-      setCatalog(cat);
+      const mapa = Object.fromEntries(porIdioma);
+      setCatalogByLocale(mapa);
+      setCatalog(mapa[REFERENCE_LOCALE] ?? null);
       setOverrides(list);
       setError(null);
     } catch (e) {
-      setError(e instanceof ApiHttpError ? e.message : 'No pudimos cargar los emails.');
+      setError(e instanceof ApiHttpError ? apiErrorMessage(e, tErrors) : t('errorLoad'));
     }
   }
 
@@ -107,26 +133,42 @@ export function EmailTemplatesManager() {
 
   const grouped = useMemo(() => {
     if (!catalog) return [];
-    return CATEGORY_ORDER.map((cat) => ({
-      ...cat,
-      entries: catalog.filter((e) => e.category === cat.key),
+    return CATEGORY_ORDER.map((key) => ({
+      key,
+      entries: catalog.filter((e) => e.category === key),
     })).filter((g) => g.entries.length > 0);
   }, [catalog]);
+
+  /**
+   * Copy por defecto del producto para (key, idioma). El catálogo se carga una
+   * vez por idioma soportado, así que el prefill de un override `en-US` sale en
+   * inglés: antes salía siempre en español y el admin tenía que borrar un texto
+   * español para escribir el inglés encima.
+   *
+   * CAMINO DEGRADADO: un idioma sin catálogo cargado (fallo de red en su
+   * fetch) cae al del idioma de referencia, que siempre está. Nunca a vacío:
+   * un editor en blanco parece que el email no existe.
+   */
+  function defaultsFor(entry: EmailTemplateCatalogEntry, locale: string) {
+    const porIdioma = catalogByLocale[locale]?.find((e) => e.key === entry.key);
+    return porIdioma ?? entry;
+  }
 
   /** Abre el editor prefilleado con el valor EFECTIVO (override o default). */
   function openEditor(
     entry: EmailTemplateCatalogEntry,
     channel: NotificationChannel = 'EMAIL',
-    locale = 'es-ES',
+    locale = REFERENCE_LOCALE,
   ) {
     const existing = findOverride(overrides, entry.key, channel, locale);
+    const def = defaultsFor(entry, locale);
     setNotice(null);
     setEditor({
       entry,
       channel,
       locale,
-      subject: existing ? (existing.subject ?? '') : (entry.defaultSubject ?? ''),
-      body: existing ? existing.body : entry.defaultBody,
+      subject: existing ? (existing.subject ?? '') : (def.defaultSubject ?? ''),
+      body: existing ? existing.body : def.defaultBody,
       existing,
     });
   }
@@ -135,12 +177,13 @@ export function EmailTemplatesManager() {
   function retarget(channel: NotificationChannel, locale: string) {
     if (!editor) return;
     const existing = findOverride(overrides, editor.entry.key, channel, locale);
+    const def = defaultsFor(editor.entry, locale);
     setEditor({
       ...editor,
       channel,
       locale,
-      subject: existing ? (existing.subject ?? '') : (editor.entry.defaultSubject ?? ''),
-      body: existing ? existing.body : editor.entry.defaultBody,
+      subject: existing ? (existing.subject ?? '') : (def.defaultSubject ?? ''),
+      body: existing ? existing.body : def.defaultBody,
       existing,
     });
   }
@@ -157,10 +200,10 @@ export function EmailTemplatesManager() {
         body: editor.body,
       });
       setEditor(null);
-      setNotice(`Plantilla de «${editor.entry.name}» personalizada.`);
+      setNotice(t('noticeSaved', { name: editor.entry.name }));
       await reload();
     } catch (e) {
-      setError(e instanceof ApiHttpError ? e.message : 'No pudimos guardar la plantilla.');
+      setError(e instanceof ApiHttpError ? apiErrorMessage(e, tErrors) : t('errorSave'));
     } finally {
       setPending(false);
     }
@@ -174,10 +217,7 @@ export function EmailTemplatesManager() {
    */
   async function handleSendTest() {
     if (!editor) return;
-    const to = window.prompt(
-      `¿A qué dirección enviamos la prueba de «${editor.entry.name}»?`,
-      lastTestEmail,
-    );
+    const to = window.prompt(t('promptTestAddress', { name: editor.entry.name }), lastTestEmail);
     if (!to?.trim()) return;
 
     setPending(true);
@@ -192,9 +232,9 @@ export function EmailTemplatesManager() {
         variables,
       });
       setLastTestEmail(to.trim());
-      setNotice(`Prueba enviada a ${res.sentTo}. Si no llega, mira en spam.`);
+      setNotice(t('noticeTestSent', { email: res.sentTo }));
     } catch (e) {
-      setError(e instanceof ApiHttpError ? e.message : 'No pudimos enviar la prueba.');
+      setError(e instanceof ApiHttpError ? apiErrorMessage(e, tErrors) : t('errorTest'));
     } finally {
       setPending(false);
     }
@@ -203,7 +243,11 @@ export function EmailTemplatesManager() {
   async function handleRestore(entry: EmailTemplateCatalogEntry, o: NotificationTemplateOverride) {
     if (
       !window.confirm(
-        `¿Restaurar «${entry.name}» (${CHANNEL_LABEL[o.channel]} · ${o.locale}) al texto por defecto del producto?`,
+        t('confirmRestore', {
+          name: entry.name,
+          channel: labelOr(t, `channel.${o.channel}`, o.channel),
+          locale: o.locale,
+        }),
       )
     )
       return;
@@ -212,10 +256,10 @@ export function EmailTemplatesManager() {
     try {
       await adminNotificationsApi.deleteOverride(o.key, { channel: o.channel, locale: o.locale });
       setEditor(null);
-      setNotice(`«${entry.name}» vuelve al texto por defecto.`);
+      setNotice(t('noticeRestored', { name: entry.name }));
       await reload();
     } catch (e) {
-      setError(e instanceof ApiHttpError ? e.message : 'No pudimos restaurar la plantilla.');
+      setError(e instanceof ApiHttpError ? apiErrorMessage(e, tErrors) : t('errorRestore'));
     } finally {
       setPending(false);
     }
@@ -253,7 +297,7 @@ export function EmailTemplatesManager() {
         <Card data-testid="email-template-editor">
           <CardHeader>
             <CardTitle>
-              Personalizar «{editor.entry.name}»{' '}
+              {t('editorTitle', { name: editor.entry.name })}{' '}
               <span className="font-mono text-sm text-text-subtle">{editor.entry.key}</span>
             </CardTitle>
             <CardDescription>{editor.entry.description}</CardDescription>
@@ -262,7 +306,7 @@ export function EmailTemplatesManager() {
             {editor.entry.variables.length > 0 ? (
               <div className="mb-3 rounded-lg border border-border-soft bg-surface-subtle p-3">
                 <p className="mb-1.5 text-xs font-semibold text-text-muted">
-                  Variables disponibles (las no resueltas quedan vacías):
+                  {t('variablesTitle')}
                 </p>
                 <ul className="flex flex-wrap gap-x-3 gap-y-1">
                   {editor.entry.variables.map((v) => (
@@ -284,7 +328,7 @@ export function EmailTemplatesManager() {
               {editor.entry.source === 'hub' ? (
                 <>
                   <div className="space-y-1.5">
-                    <Label htmlFor="tpl-channel">Canal</Label>
+                    <Label htmlFor="tpl-channel">{t('channelLabel')}</Label>
                     <Select
                       id="tpl-channel"
                       value={editor.channel}
@@ -292,12 +336,12 @@ export function EmailTemplatesManager() {
                         retarget(e.target.value as NotificationChannel, editor.locale)
                       }
                     >
-                      <option value="EMAIL">Email</option>
-                      <option value="IN_APP">In-app</option>
+                      <option value="EMAIL">{t('channel.EMAIL')}</option>
+                      <option value="IN_APP">{t('channel.IN_APP')}</option>
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="tpl-locale">Idioma</Label>
+                    <Label htmlFor="tpl-locale">{t('localeLabel')}</Label>
                     <Select
                       id="tpl-locale"
                       value={editor.locale}
@@ -305,19 +349,17 @@ export function EmailTemplatesManager() {
                     >
                       {SUPPORTED_LOCALES.map((l) => (
                         <option key={l.code} value={l.code}>
-                          {l.label} ({l.code})
+                          {t('localeOption', { label: l.label, code: l.code })}
                         </option>
                       ))}
                     </Select>
                   </div>
                 </>
               ) : (
-                <p className="text-xs text-text-subtle sm:col-span-2">
-                  Email transaccional — se personaliza el canal Email en español (es-ES).
-                </p>
+                <p className="text-xs text-text-subtle sm:col-span-2">{t('transactionalNote')}</p>
               )}
               <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="tpl-subject">Asunto</Label>
+                <Label htmlFor="tpl-subject">{t('subjectLabel')}</Label>
                 <Input
                   id="tpl-subject"
                   value={editor.subject}
@@ -326,7 +368,7 @@ export function EmailTemplatesManager() {
                 />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="tpl-body">Cuerpo</Label>
+                <Label htmlFor="tpl-body">{t('bodyLabel')}</Label>
                 <textarea
                   id="tpl-body"
                   rows={8}
@@ -346,7 +388,7 @@ export function EmailTemplatesManager() {
                   onClick={() => void handleRestore(editor.entry, editor.existing!)}
                   disabled={pending}
                 >
-                  Restaurar por defecto
+                  {t('restoreDefault')}
                 </Button>
               ) : null}
               <Button
@@ -355,7 +397,7 @@ export function EmailTemplatesManager() {
                 onClick={() => void handleSendTest()}
                 disabled={pending}
               >
-                Enviarme una prueba
+                {t('sendTest')}
               </Button>
               <Button
                 type="button"
@@ -363,14 +405,14 @@ export function EmailTemplatesManager() {
                 onClick={() => setEditor(null)}
                 disabled={pending}
               >
-                Cancelar
+                {t('cancel')}
               </Button>
               <Button
                 type="button"
                 onClick={() => void handleSave()}
                 disabled={pending || !editor.body.trim()}
               >
-                {pending ? 'Guardando…' : 'Guardar'}
+                {pending ? t('saving') : t('save')}
               </Button>
             </div>
           </CardContent>
@@ -380,7 +422,7 @@ export function EmailTemplatesManager() {
       {grouped.map((group) => (
         <Card key={group.key}>
           <CardHeader>
-            <CardTitle>{group.label}</CardTitle>
+            <CardTitle>{t(`category.${group.key}`)}</CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="divide-y divide-border-soft">
@@ -398,31 +440,31 @@ export function EmailTemplatesManager() {
                         {entry.name}
                         {entry.channels.map((c) => (
                           <Badge key={c} variant="muted">
-                            {CHANNEL_LABEL[c]}
+                            {labelOr(t, `channel.${c}`, c)}
                           </Badge>
                         ))}
-                        {customized ? <Badge variant="info">Personalizado</Badge> : null}
+                        {customized ? <Badge variant="info">{t('customized')}</Badge> : null}
                       </p>
                       <p className="mt-0.5 text-xs text-text-subtle">{entry.description}</p>
                       <p className="mt-1 truncate text-xs text-text-muted">
-                        <span className="font-medium">Asunto:</span>{' '}
+                        <span className="font-medium">{t('subjectPrefix')}</span>{' '}
                         {findOverride(overrides, entry.key, 'EMAIL', 'es-ES')?.subject ??
                           entry.defaultSubject ??
-                          '(sin asunto)'}
+                          t('noSubject')}
                       </p>
                       {entryOverrides.length > 0 ? (
                         <ul className="mt-1.5 space-y-1">
                           {entryOverrides.map((o) => (
                             <li key={o.id} className="flex items-center gap-2 text-xs">
                               <Badge variant="info">
-                                {CHANNEL_LABEL[o.channel]} · {o.locale}
+                                {labelOr(t, `channel.${o.channel}`, o.channel)} · {o.locale}
                               </Badge>
                               <button
                                 type="button"
                                 onClick={() => openEditor(entry, o.channel, o.locale)}
                                 className="text-text-muted hover:text-brand-700 hover:underline"
                               >
-                                Editar
+                                {t('edit')}
                               </button>
                               <button
                                 type="button"
@@ -430,7 +472,7 @@ export function EmailTemplatesManager() {
                                 className="text-danger-700 hover:underline"
                                 disabled={pending}
                               >
-                                Restaurar
+                                {t('restore')}
                               </button>
                             </li>
                           ))}
@@ -444,7 +486,7 @@ export function EmailTemplatesManager() {
                       onClick={() => openEditor(entry)}
                       disabled={pending}
                     >
-                      {customized ? 'Editar' : 'Personalizar'}
+                      {customized ? t('edit') : t('customize')}
                     </Button>
                   </li>
                 );

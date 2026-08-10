@@ -67,15 +67,29 @@ apps/api/data/
 # Test artifacts
 apps/e2e/test-results/
 apps/e2e/branding-shots/
+# Capturas de la documentación: se generan con apps/e2e/shots/ y su sitio es el
+# repo didacta-docs, no este. Aquí solo vive el script que las produce.
+apps/e2e/shots-output/
 test-results/
 playwright-report/
 
 # Trabajo local / scripts temporales
 work/
 
-# Claude Code settings locales
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
+# Documentación y meta de proyecto: fuera del repo por decisión de producto.
+# El repositorio versiona lo necesario para construir y ejecutar la aplicación
+# MÁS el mínimo que un repo público fair-code tiene que declarar en sí mismo:
+# LICENSE, LICENSE_EE, README, LICENSE_NOTICE, SECURITY, CONTRIBUTING,
+# CODE_OF_CONDUCT, TRADEMARKS, COMMERCIAL_USE y .github/ISSUE_TEMPLATE/.
+# El manual (instalación, actualización, operación, versionado) vive en
+# https://didacta.io/docs, no aquí. Todo lo demás que se sacó del árbol vive
+# en esta carpeta, en local.
+.fueradegit/
+
+# Claude Code: estado local del agente (settings, locks y worktrees). El
+# directorio entero es local — los worktrees de agente son clones completos
+# del repo y pesan GB.
+.claude/
 
 # Evidencia local de e2e (se regenera al correr el spec)
 drip-evidence/
@@ -86,3 +100,6 @@ evidencias/
 .quality/
 doc/
 apps/e2e/test-results-demo-nav/
+
+# Estado de ejecución del arnés E2E (scripts/e2e-stack.sh): logs y PIDs.
+.e2e-stack/

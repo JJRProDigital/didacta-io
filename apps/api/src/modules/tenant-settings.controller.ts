@@ -27,8 +27,28 @@ import { ZodValidationPipe } from '../auth/zod-validation.pipe';
 import { ModuleContextFactory } from './module-context.factory';
 import { PrismaService } from '../prisma/prisma.service';
 import { mergeSecretFields, redactSensitiveFields } from './redact-sensitive-fields';
+import {
+  interpolate,
+  resolveFixedEmailCopy,
+  resolveRecipientLocale,
+  resolveSmtpSettingsPing,
+} from './notifications/email-template-catalog';
 
 const ADMIN_ROLES = new Set(['super_admin', 'tenant_admin']);
+
+/**
+ * Relleno del `message` cuando el MTA rechaza el envío SIN devolver texto.
+ * En ese caso NO se manda `detail`: el front detecta su ausencia y pinta el
+ * `message` crudo en vez de una frase traducida con el hueco vacío. Mismo
+ * criterio que `SMTP_NO_DETAIL` en `admin/admin-smtp.controller.ts`.
+ */
+const SMTP_NO_DETAIL = 'sin detalle';
+
+/**
+ * Corte del diagnóstico del parser de config SMTP. Es el mismo recorte que ya
+ * hacía el `message`: si cambia, el español dejaría de salir byte a byte igual.
+ */
+const SMTP_CONFIG_DETAIL_MAX = 200;
 
 const ScopeKeyParamSchema = z
   .string()
@@ -45,7 +65,10 @@ function requireAdmin(user: SessionClaims | undefined) {
   if (!user) throw new UnauthorizedException();
   const isAdmin = user.roles.some((r) => ADMIN_ROLES.has(r));
   if (!isAdmin) {
-    throw new ForbiddenException('Solo super_admin o tenant_admin pueden gestionar settings');
+    throw new ForbiddenException({
+      message: 'Solo super_admin o tenant_admin pueden gestionar settings',
+      code: 'TENANT_SETTINGS_ADMIN_ONLY',
+    });
   }
   return user;
 }
@@ -53,7 +76,11 @@ function requireAdmin(user: SessionClaims | undefined) {
 function validateParam(name: string, value: string) {
   const r = ScopeKeyParamSchema.safeParse(value);
   if (!r.success) {
-    throw new NotFoundException(`Parámetro ${name} inválido`);
+    throw new NotFoundException({
+      message: `Parámetro ${name} inválido`,
+      code: 'TENANT_SETTINGS_PARAM_INVALID',
+      detail: name,
+    });
   }
   return r.data;
 }
@@ -243,24 +270,36 @@ export class TenantSettingsController {
 
     const raw = await config.get(claims.tenantId, 'notifications', 'smtp');
     if (!raw) {
-      throw new BadRequestException('SMTP no configurado para este tenant');
+      throw new BadRequestException({
+        message: 'SMTP no configurado para este tenant',
+        code: 'TENANT_SETTINGS_SMTP_NOT_CONFIGURED',
+      });
     }
 
     let parsed;
     try {
       parsed = smtp.parseConfig(raw);
     } catch (err) {
-      throw new BadRequestException(
-        `Config SMTP inválida: ${(err as Error).message.slice(0, 200)}`,
-      );
+      // El motivo del rechazo lo redacta el parser de nodemailer (host vacío,
+      // puerto fuera de rango…): viaja aparte del `message` para que el front
+      // lo enmarque en su idioma sin borrarlo al traducir el code.
+      const detail = (err as Error).message.slice(0, SMTP_CONFIG_DETAIL_MAX);
+      throw new BadRequestException({
+        message: `Config SMTP inválida: ${detail}`,
+        code: 'TENANT_SETTINGS_SMTP_CONFIG_INVALID',
+        detail,
+      });
     }
 
     const me = await this.prisma.user.findUnique({
       where: { id: claims.sub },
-      select: { email: true, tenantId: true },
+      select: { email: true, tenantId: true, locale: true },
     });
     if (!me || me.tenantId !== claims.tenantId) {
-      throw new BadRequestException('No se pudo resolver tu email del tenant');
+      throw new BadRequestException({
+        message: 'No se pudo resolver tu email del tenant',
+        code: 'TENANT_SETTINGS_EMAIL_UNRESOLVED',
+      });
     }
 
     const tenant = await this.prisma.tenant.findUnique({
@@ -268,14 +307,26 @@ export class TenantSettingsController {
       select: { slug: true },
     });
 
+    // El ping se lo manda el admin a SÍ MISMO (`to: me.email`), así que sale en
+    // SU idioma. El copy vive en el catálogo de plantillas, no aquí.
+    const locale = resolveRecipientLocale(me.locale);
+    const ping = resolveSmtpSettingsPing(locale);
+    const vars = {
+      tenantSlug: tenant?.slug ?? resolveFixedEmailCopy('value.unknown_tenant_slug', locale),
+      timestamp: new Date().toISOString(),
+    };
     const result = await smtp.send(parsed, {
       to: me.email,
-      subject: 'Prueba de SMTP — Didacta',
-      text: `Si recibiste este correo, la configuración SMTP de tu tenant en Didacta funciona correctamente.\n\nTenant: ${tenant?.slug ?? '(desconocido)'}\nFecha: ${new Date().toISOString()}`,
+      subject: ping.subject ?? '',
+      text: interpolate(ping.body, vars),
     });
 
     if (!result.ok) {
-      throw new BadRequestException(`SMTP falló: ${result.error ?? 'sin detalle'}`);
+      throw new BadRequestException({
+        message: `SMTP falló: ${result.error ?? SMTP_NO_DETAIL}`,
+        code: 'TENANT_SETTINGS_SMTP_TEST_FAILED',
+        ...(result.error ? { detail: result.error } : {}),
+      });
     }
     return { ok: true, sentTo: me.email, messageId: result.messageId };
   }

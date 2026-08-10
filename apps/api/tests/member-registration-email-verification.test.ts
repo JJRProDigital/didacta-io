@@ -179,19 +179,19 @@ describe('EmailVerificationService.requestCode', () => {
     expect(expiresInSeconds).toBe(600); // 10 minutos.
     expect(prisma.codes).toHaveLength(1);
     const row = prisma.codes[0];
-    expect(row.tenantId).toBe(TENANT_ID);
-    expect(row.email).toBe(EMAIL);
-    expect(row.attempts).toBe(0);
-    expect(row.usedAt).toBeNull();
+    expect(row!.tenantId).toBe(TENANT_ID);
+    expect(row!.email).toBe(EMAIL);
+    expect(row!.attempts).toBe(0);
+    expect(row!.usedAt).toBeNull();
     // El codeHash es SHA-256 hex de 64 chars; nunca el código en claro.
-    expect(row.codeHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(row!.codeHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it('expira a los 10 minutos del request', async () => {
     const { service, prisma } = makeService();
     const before = Date.now();
     await service.requestCode(TENANT_ID, EMAIL, CTX);
-    const delta = prisma.codes[0].expiresAt.getTime() - before;
+    const delta = prisma.codes[0]!.expiresAt.getTime() - before;
     expect(delta).toBeGreaterThanOrEqual(9 * 60_000);
     expect(delta).toBeLessThanOrEqual(11 * 60_000);
   });
@@ -203,8 +203,8 @@ describe('EmailVerificationService.requestCode', () => {
 
     expect(prisma.codes).toHaveLength(2);
     // El primero quedó invalidado (usedAt seteado), el segundo sigue vigente.
-    expect(prisma.codes[0].usedAt).not.toBeNull();
-    expect(prisma.codes[1].usedAt).toBeNull();
+    expect(prisma.codes[0]!.usedAt).not.toBeNull();
+    expect(prisma.codes[1]!.usedAt).toBeNull();
   });
 
   it('llama al SMTP con el código (envío best-effort)', async () => {
@@ -255,7 +255,7 @@ describe('EmailVerificationService.verifyCode', () => {
 
     const ok = await service.verifyCode(TENANT_ID, EMAIL, '123456', CTX);
     expect(ok).toBe(true);
-    expect(prisma.codes[0].usedAt).not.toBeNull();
+    expect(prisma.codes[0]!.usedAt).not.toBeNull();
   });
 
   it('con un código incorrecto devuelve false e incrementa attempts', async () => {
@@ -264,8 +264,8 @@ describe('EmailVerificationService.verifyCode', () => {
 
     const ok = await service.verifyCode(TENANT_ID, EMAIL, '000000', CTX);
     expect(ok).toBe(false);
-    expect(prisma.codes[0].attempts).toBe(1);
-    expect(prisma.codes[0].usedAt).toBeNull();
+    expect(prisma.codes[0]!.attempts).toBe(1);
+    expect(prisma.codes[0]!.usedAt).toBeNull();
   });
 
   it('rechaza (false) cuando ya se alcanzó el máximo de intentos', async () => {
@@ -276,7 +276,7 @@ describe('EmailVerificationService.verifyCode', () => {
     const ok = await service.verifyCode(TENANT_ID, EMAIL, '123456', CTX);
     expect(ok).toBe(false);
     // No incrementa más allá del máximo (la guarda corta antes).
-    expect(prisma.codes[0].attempts).toBe(5);
+    expect(prisma.codes[0]!.attempts).toBe(5);
   });
 
   it('rechaza (false) un código expirado aunque el dígito sea correcto', async () => {
@@ -288,7 +288,7 @@ describe('EmailVerificationService.verifyCode', () => {
 
     const ok = await service.verifyCode(TENANT_ID, EMAIL, '123456', CTX);
     expect(ok).toBe(false);
-    expect(prisma.codes[0].usedAt).toBeNull();
+    expect(prisma.codes[0]!.usedAt).toBeNull();
   });
 
   it('devuelve false cuando no hay ninguna fila vigente para (tenant, email)', async () => {
@@ -309,5 +309,106 @@ describe('EmailVerificationService.verifyCode', () => {
 
     expect(await service.verifyCode(TENANT_ID, EMAIL, '111111', CTX)).toBe(false);
     expect(await service.verifyCode(TENANT_ID, EMAIL, '999999', CTX)).toBe(true);
+  });
+});
+
+// ============================================================================
+// Idioma del email del código.
+//
+// El OTP verifica un email que a menudo TODAVÍA no tiene fila en `user` (es el
+// paso previo al alta), así que su idioma se resuelve best-effort contra esa
+// fila y, si no la hay, cae a `HUB_DEFAULT_LOCALE`. Un miembro que vuelve —o
+// que reintenta el alta— sí tiene fila y tiene que recibir SU idioma.
+// ============================================================================
+describe('EmailVerificationService · idioma del email del código', () => {
+  /** Service con modelo `user` consultable y SMTP que captura lo enviado. */
+  function makeServiceConUsuario(
+    user: { locale: string | null } | null,
+    opts?: { throws?: boolean },
+  ) {
+    const prisma = makeFakePrisma() as ReturnType<typeof makeFakePrisma> & {
+      user: unknown;
+      modThemingTenantTheme: unknown;
+      notificationTemplate: unknown;
+    };
+    prisma.user = {
+      async findUnique() {
+        if (opts?.throws) throw new Error('db down');
+        return user;
+      },
+    };
+    prisma.modThemingTenantTheme = {
+      async findUnique() {
+        return null;
+      },
+    };
+    prisma.notificationTemplate = {
+      async findUnique() {
+        return null;
+      },
+    };
+
+    const enviados: Array<{ subject: string; text: string; html: string }> = [];
+    const smtp = {
+      async send(_c: unknown, msg: { subject: string; text: string; html: string }) {
+        enviados.push(msg);
+        return { ok: true, messageId: 'fake' };
+      },
+    };
+    const service = new EmailVerificationService(
+      prisma as never,
+      fakeAuditLog as never,
+      smtp as never,
+      fakeSmtpResolver as never,
+      fakeLogger as never,
+    );
+    return { service, enviados };
+  }
+
+  it('destinatario con fila en-US: el código llega con el cuerpo en inglés', async () => {
+    const { service, enviados } = makeServiceConUsuario({ locale: 'en-US' });
+    await service.requestCode(TENANT_ID, EMAIL, CTX);
+
+    const mail = enviados[0]!;
+    expect(mail.subject).toBe('Your access code');
+    expect(mail.html).toContain('<html lang="en">');
+    expect(mail.text).toContain('Enter it on the verification screen to continue');
+    expect(mail.html).not.toContain('Introdúcelo en la pantalla');
+  });
+
+  it('destinatario con fila es-ES: byte a byte lo que ya recibía', async () => {
+    const { service, enviados } = makeServiceConUsuario({ locale: 'es-ES' });
+    await service.requestCode(TENANT_ID, EMAIL, CTX);
+
+    const mail = enviados[0]!;
+    expect(mail.subject).toBe('Tu código de acceso');
+    expect(mail.html).toContain('<html lang="es">');
+    expect(mail.html).toContain(
+      'Introdúcelo en la pantalla de verificación para continuar. Este código caduca en 10 minutos.',
+    );
+  });
+
+  it('CAMINO DEGRADADO: sin fila en `user` (el caso normal del alta) → idioma de referencia', async () => {
+    const { service, enviados } = makeServiceConUsuario(null);
+    await service.requestCode(TENANT_ID, EMAIL, CTX);
+    expect(enviados[0]!.subject).toBe('Tu código de acceso');
+    expect(enviados[0]!.html).toContain('<html lang="es">');
+  });
+
+  it('CAMINO DEGRADADO: fila con locale en blanco o sin catálogo → idioma de referencia', async () => {
+    for (const locale of [null, '', '   ', 'pt-BR']) {
+      const { service, enviados } = makeServiceConUsuario({ locale });
+      await service.requestCode(TENANT_ID, EMAIL, CTX);
+      expect(enviados[0]!.subject, String(locale)).toBe('Tu código de acceso');
+    }
+  });
+
+  it('CAMINO DEGRADADO: si la consulta del idioma revienta, el código se manda igual', async () => {
+    // El usuario está esperando el código en pantalla: perder el idioma es
+    // aceptable, perder el código no.
+    const { service, enviados } = makeServiceConUsuario({ locale: 'en-US' }, { throws: true });
+    await service.requestCode(TENANT_ID, EMAIL, CTX);
+    expect(enviados).toHaveLength(1);
+    expect(enviados[0]!.html).toContain('<html lang="es">');
   });
 });

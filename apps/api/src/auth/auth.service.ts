@@ -10,6 +10,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaAuditLogService } from '../modules/prisma-audit-log.service';
+import { PrismaTenantConfigService } from '../modules/prisma-tenant-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { runAsTenant, runSanctionedGlobalAccess } from '../tenancy/tenant-context.storage';
 import type { ClientContext } from './client-context';
@@ -43,10 +44,16 @@ const DEFAULT_SIGNUP_ROLE = 'alumno';
  * entran por flujos que asignan rol — invitación de admin, SSO o los módulos y
  * APIs de registro instalados. El signup abierto creaba usuarios ACTIVE sin rol
  * (JWT roles:[] → 403 en storage y compañía).
- * `AUTH_SIGNUP_ENABLED=true` lo reabre en stacks de dev/E2E que lo usan para
- * fabricar usuarios de prueba.
+ *
+ * Dos formas de reabrirlo (A3 de `work/migracion-env-a-panel.md`):
+ *   - `AUTH_SIGNUP_ENABLED=true` (env): lo abre para TODOS los tenants de la
+ *     instalación. Pensado para stacks de dev/E2E que fabrican usuarios de
+ *     prueba — precedencia máxima, igual que el resto de env vars del operador.
+ *   - `tenant_setting` scope `auth` key `signup` (`{ enabled: true }`): lo abre
+ *     SOLO para ese tenant. Decisión de negocio del tenant (¿acepto altas
+ *     públicas?), no del despliegue — encaja en `/admin/configuracion`.
  */
-function isSignupEnabled(): boolean {
+function isSignupEnabledByEnv(): boolean {
   return process.env['AUTH_SIGNUP_ENABLED'] === 'true';
 }
 
@@ -103,6 +110,7 @@ export class AuthService {
     private readonly auditLog: PrismaAuditLogService,
     private readonly mfaPolicy: MfaPolicyService,
     private readonly sessions: SessionRegistryService,
+    private readonly tenantConfig: PrismaTenantConfigService,
   ) {}
 
   async signup(
@@ -110,28 +118,48 @@ export class AuthService {
     ctx: ClientContext = NO_CLIENT_CONTEXT,
     resolvedTenantId?: string,
   ): Promise<AuthResult> {
-    if (!isSignupEnabled()) {
-      throw new ForbiddenException(
-        'El registro público está deshabilitado. Pide acceso a tu organización.',
-      );
-    }
+    // El check por-tenant necesita el tenant resuelto, así que la
+    // resolución pasa a ir SIEMPRE primero (antes solo se resolvía si el
+    // gate global ya había dejado pasar). Igual que signin, un tenant no
+    // identificable da 401 antes que nada.
     const tenant = await this.resolveTenantForRequest({
       explicitSlug: dto.tenantSlug,
       resolvedTenantId,
       email: dto.email,
     });
     if (!tenant) {
-      throw new UnauthorizedException(
-        'No pudimos identificar tu organización. Prueba desde el enlace que te dio el admin o pide ayuda.',
-      );
+      throw new UnauthorizedException({
+        message:
+          'No pudimos identificar tu organización. Prueba desde el enlace que te dio el admin o pide ayuda.',
+        code: 'AUTH_TENANT_UNRESOLVED',
+      });
     }
 
     // RLS F2: el alta entera corre bajo el ALS del tenant resuelto — sin esto
     // (endpoint público, sin middleware con Authorization) cada query era un
-    // hueco de contexto.
-    return runAsTenant(tenant.id, () => this.signupInTenant(tenant, dto, ctx), {
-      traceLabel: 'auth-signup',
-    });
+    // hueco de contexto. El check de signup habilitado también corre acá
+    // adentro: lee tenant_setting, que es tenant-scoped.
+    return runAsTenant(
+      tenant.id,
+      async () => {
+        if (!(await this.isSignupEnabledForTenant(tenant.id))) {
+          throw new ForbiddenException({
+            message: 'El registro público está deshabilitado. Pide acceso a tu organización.',
+            code: 'AUTH_SIGNUP_DISABLED',
+          });
+        }
+        return this.signupInTenant(tenant, dto, ctx);
+      },
+      { traceLabel: 'auth-signup' },
+    );
+  }
+
+  private async isSignupEnabledForTenant(tenantId: string): Promise<boolean> {
+    if (isSignupEnabledByEnv()) return true;
+    const setting = await this.tenantConfig
+      .get<{ enabled?: boolean }>(tenantId, 'auth', 'signup')
+      .catch(() => undefined);
+    return setting?.enabled === true;
   }
 
   private async signupInTenant(
@@ -143,7 +171,10 @@ export class AuthService {
       where: { tenantId_email: { tenantId: tenant.id, email: dto.email } },
     });
     if (existing) {
-      throw new ConflictException('El email ya está registrado en este tenant');
+      throw new ConflictException({
+        message: 'El email ya está registrado en este tenant',
+        code: 'AUTH_EMAIL_TAKEN',
+      });
     }
 
     const passwordHash = await this.passwords.hash(dto.password);
@@ -246,7 +277,10 @@ export class AuthService {
       email: dto.email,
     });
     if (!tenant) {
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException({
+        message: 'Credenciales inválidas',
+        code: 'AUTH_INVALID_CREDENTIALS',
+      });
     }
 
     // RLS F2: mismo racional que en signup.
@@ -275,7 +309,10 @@ export class AuthService {
         ip: ctx.ip ?? undefined,
         userAgent: ctx.userAgent ?? undefined,
       });
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException({
+        message: 'Credenciales inválidas',
+        code: 'AUTH_INVALID_CREDENTIALS',
+      });
     }
 
     const valid = await this.passwords.verify(user.passwordHash, dto.password);
@@ -290,7 +327,10 @@ export class AuthService {
         ip: ctx.ip ?? undefined,
         userAgent: ctx.userAgent ?? undefined,
       });
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException({
+        message: 'Credenciales inválidas',
+        code: 'AUTH_INVALID_CREDENTIALS',
+      });
     }
 
     await this.prisma.user.update({
@@ -388,7 +428,10 @@ export class AuthService {
   ): Promise<SignedTokens> {
     const claims = await this.tokens.verifyRefresh(refreshToken).catch(() => null);
     if (!claims) {
-      throw new UnauthorizedException('Refresh token inválido o expirado');
+      throw new UnauthorizedException({
+        message: 'Refresh token inválido o expirado',
+        code: 'AUTH_REFRESH_TOKEN_INVALID',
+      });
     }
     // RLS F2: lookup por id de usuario ANTES de conocer el tenant — acceso
     // global sancionado (inventario del flip F3).
@@ -399,7 +442,10 @@ export class AuthService {
       }),
     );
     if (!user || user.status !== 'ACTIVE') {
-      throw new UnauthorizedException('Usuario no válido');
+      throw new UnauthorizedException({
+        message: 'Usuario no válido',
+        code: 'AUTH_USER_INVALID',
+      });
     }
     const roles = user.roles.map((r: { role: { name: string } }) => r.role.name);
     // Rotar y no re-emitir: si cada refresh abriera una sesión nueva, la lista
