@@ -11,6 +11,7 @@ import { SsoSamlModule } from '../sso/saml/saml.module';
 import { SsoWpModule } from '../sso/wp/wp-sso.module';
 import { AdminApiKeysController } from './admin-api-keys.controller';
 import { AdminModulesController } from './admin-modules.controller';
+import { AdminProvisioningController } from './admin-provisioning.controller';
 import { AdminSmtpController } from './admin-smtp.controller';
 import { AdminStripeController } from './admin-stripe.controller';
 import { AdminStatsController } from './admin-stats.controller';
@@ -86,6 +87,10 @@ import { SuperUsersService } from './super/super-users.service';
     // Follow-up `feat:multi_tenant.real` — listings cross-tenant para
     // super_admin (holdings con varias filiales). Gateado por capability EE.
     SuperUsersController,
+    // UC-C103 — emisión/revocación de la credencial de provisioning que usa un
+    // plano de control externo (Didacta Cloud, o el script de cualquier
+    // self-hoster) sobre la lista blanca de rutas de tenants.
+    AdminProvisioningController,
   ],
   providers: [
     InvitationsService,

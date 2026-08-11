@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import { LICENSE_CAPABILITIES, LicenseService } from '@didacta/license-sdk';
+import { type AdminActor, auditActorId, auditActorTrace } from '../auth/admin-actor';
 import type { ClientContext } from '../auth/client-context';
 import { PasswordResetService } from '../auth/password-reset.service';
 import { PrismaAuditLogService } from '../modules/prisma-audit-log.service';
@@ -256,7 +257,7 @@ export class AdminTenantsService {
    * El admin recibe email para definir contraseña (no se le da una temporal).
    */
   async create(
-    actorId: string,
+    actor: AdminActor,
     dto: {
       slug: string;
       name: string;
@@ -266,6 +267,28 @@ export class AdminTenantsService {
     },
     webBaseUrl: string,
     ctx: ClientContext = NO_CTX,
+  ): Promise<TenantListItem> {
+    // Toda la operación fuera del contexto de tenant, igual que el bootstrap
+    // de `/setup/init`. El tenant que se crea NO es el de quien llama: sin
+    // salir del ALS, el `set_config` que inyecta la extensión escopa la
+    // transacción al tenant del super_admin y la policy `WITH CHECK
+    // (tenant_id = current_tenant_id())` rechaza el `user` del tenant nuevo.
+    // Con credencial de provisioning no hay contexto ninguno, y `didacta_app`
+    // es NOBYPASSRLS: sin sancionar, tampoco vería una fila.
+    return runGlobalWithoutTenant(() => this.createGlobal(actor, dto, webBaseUrl, ctx));
+  }
+
+  private async createGlobal(
+    actor: AdminActor,
+    dto: {
+      slug: string;
+      name: string;
+      adminEmail: string;
+      adminName?: string;
+      primaryHostname: string;
+    },
+    webBaseUrl: string,
+    ctx: ClientContext,
   ): Promise<TenantListItem> {
     if (!SLUG_RE.test(dto.slug)) {
       throw new BadRequestException({
@@ -353,7 +376,7 @@ export class AdminTenantsService {
 
     await this.auditLog.record({
       tenantId: created.tenant.id,
-      actorId,
+      actorId: auditActorId(actor),
       action: 'admin.tenant.created',
       resourceType: 'tenant',
       resourceId: created.tenant.id,
@@ -361,6 +384,7 @@ export class AdminTenantsService {
         slug: dto.slug,
         primaryHostname: hostname,
         adminEmail: dto.adminEmail,
+        ...auditActorTrace(actor),
       },
       ip: ctx.ip ?? undefined,
       userAgent: ctx.userAgent ?? undefined,
@@ -390,10 +414,19 @@ export class AdminTenantsService {
    * pasar del "Didacta" genérico del bootstrap al nombre real de la academia.
    */
   async rename(
-    actorId: string,
+    actor: AdminActor,
     id: string,
     newName: string,
     ctx: ClientContext = NO_CTX,
+  ): Promise<TenantListItem> {
+    return runGlobalWithoutTenant(() => this.renameGlobal(actor, id, newName, ctx));
+  }
+
+  private async renameGlobal(
+    actor: AdminActor,
+    id: string,
+    newName: string,
+    ctx: ClientContext,
   ): Promise<TenantListItem> {
     const trimmed = newName.trim();
     if (trimmed.length === 0) {
@@ -413,11 +446,11 @@ export class AdminTenantsService {
 
     await this.auditLog.record({
       tenantId: id,
-      actorId,
+      actorId: auditActorId(actor),
       action: 'admin.tenant.renamed',
       resourceType: 'tenant',
       resourceId: id,
-      metadata: { previousName: t.name, newName: trimmed },
+      metadata: { previousName: t.name, newName: trimmed, ...auditActorTrace(actor) },
       ip: ctx.ip ?? undefined,
       userAgent: ctx.userAgent ?? undefined,
     });
@@ -426,10 +459,22 @@ export class AdminTenantsService {
   }
 
   async setStatus(
-    actorId: string,
+    actor: AdminActor,
     id: string,
     status: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED',
     ctx: ClientContext = NO_CTX,
+  ): Promise<TenantListItem> {
+    // `session` lleva RLS: sin salir del contexto, el deleteMany de abajo
+    // borraba cero filas en silencio y el tenant suspendido se quedaba con
+    // todas sus sesiones vivas.
+    return runGlobalWithoutTenant(() => this.setStatusGlobal(actor, id, status, ctx));
+  }
+
+  private async setStatusGlobal(
+    actor: AdminActor,
+    id: string,
+    status: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED',
+    ctx: ClientContext,
   ): Promise<TenantListItem> {
     const t = await this.prisma.tenant.findFirst({
       where: { id, deletedAt: null },
@@ -452,11 +497,11 @@ export class AdminTenantsService {
 
     await this.auditLog.record({
       tenantId: id,
-      actorId,
+      actorId: auditActorId(actor),
       action: `admin.tenant.status_changed.${status.toLowerCase()}`,
       resourceType: 'tenant',
       resourceId: id,
-      metadata: { previousStatus: t.status, newStatus: status },
+      metadata: { previousStatus: t.status, newStatus: status, ...auditActorTrace(actor) },
       ip: ctx.ip ?? undefined,
       userAgent: ctx.userAgent ?? undefined,
     });
@@ -465,10 +510,19 @@ export class AdminTenantsService {
   }
 
   async addDomain(
-    actorId: string,
+    actor: AdminActor,
     tenantId: string,
     hostname: string,
     ctx: ClientContext = NO_CTX,
+  ): Promise<TenantListItem> {
+    return runGlobalWithoutTenant(() => this.addDomainGlobal(actor, tenantId, hostname, ctx));
+  }
+
+  private async addDomainGlobal(
+    actor: AdminActor,
+    tenantId: string,
+    hostname: string,
+    ctx: ClientContext,
   ): Promise<TenantListItem> {
     const host = hostname.trim().toLowerCase();
     if (!HOSTNAME_RE.test(host)) {
@@ -489,11 +543,11 @@ export class AdminTenantsService {
     });
     await this.auditLog.record({
       tenantId,
-      actorId,
+      actorId: auditActorId(actor),
       action: 'admin.tenant.domain_added',
       resourceType: 'tenant',
       resourceId: tenantId,
-      metadata: { hostname: host },
+      metadata: { hostname: host, ...auditActorTrace(actor) },
       ip: ctx.ip ?? undefined,
       userAgent: ctx.userAgent ?? undefined,
     });
@@ -501,10 +555,19 @@ export class AdminTenantsService {
   }
 
   async removeDomain(
-    actorId: string,
+    actor: AdminActor,
     tenantId: string,
     hostname: string,
     ctx: ClientContext = NO_CTX,
+  ): Promise<TenantListItem> {
+    return runGlobalWithoutTenant(() => this.removeDomainGlobal(actor, tenantId, hostname, ctx));
+  }
+
+  private async removeDomainGlobal(
+    actor: AdminActor,
+    tenantId: string,
+    hostname: string,
+    ctx: ClientContext,
   ): Promise<TenantListItem> {
     const host = hostname.trim().toLowerCase();
     const domain = await this.prisma.tenantDomain.findFirst({
@@ -525,11 +588,11 @@ export class AdminTenantsService {
     await this.prisma.tenantDomain.delete({ where: { id: domain.id } });
     await this.auditLog.record({
       tenantId,
-      actorId,
+      actorId: auditActorId(actor),
       action: 'admin.tenant.domain_removed',
       resourceType: 'tenant',
       resourceId: tenantId,
-      metadata: { hostname: host },
+      metadata: { hostname: host, ...auditActorTrace(actor) },
       ip: ctx.ip ?? undefined,
       userAgent: ctx.userAgent ?? undefined,
     });

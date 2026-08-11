@@ -97,9 +97,9 @@ describe('AdminTenantsService · gate feat:multi_tenant.real (ART-010)', () => {
         ...([prisma, noopAudit, noopReset, license, noopLogger] as unknown as ServiceCtor),
       );
 
-      await expect(svc.create('actor-1', dto, 'http://localhost:3000')).rejects.toThrow(
-        CapabilityRequiredError,
-      );
+      await expect(
+        svc.create({ kind: 'user', userId: 'actor-1' }, dto, 'http://localhost:3000'),
+      ).rejects.toThrow(CapabilityRequiredError);
       // No tocó la transacción ni los datos del nuevo tenant.
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma.tenantDomain.findUnique).not.toHaveBeenCalled();
@@ -135,7 +135,11 @@ describe('AdminTenantsService · gate feat:multi_tenant.real (ART-010)', () => {
       const svc = new AdminTenantsService(
         ...([prisma, noopAudit, noopReset, license, noopLogger] as unknown as ServiceCtor),
       );
-      const result = await svc.create('actor-1', dto, 'http://localhost:3000');
+      const result = await svc.create(
+        { kind: 'user', userId: 'actor-1' },
+        dto,
+        'http://localhost:3000',
+      );
       expect(result.id).toBe(fakeTenant.id);
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
@@ -187,7 +191,9 @@ describe('AdminTenantsService · gate feat:multi_tenant.real (ART-010)', () => {
       const svc = new AdminTenantsService(
         ...([prisma, noopAudit, noopReset, license, noopLogger] as unknown as ServiceCtor),
       );
-      await expect(svc.create('actor-1', dto, 'http://localhost:3000')).resolves.toBeDefined();
+      await expect(
+        svc.create({ kind: 'user', userId: 'actor-1' }, dto, 'http://localhost:3000'),
+      ).resolves.toBeDefined();
     });
   });
 });

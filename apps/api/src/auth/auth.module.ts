@@ -8,6 +8,7 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { LicenseService } from '@didacta/license-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { PrismaAuditLogService } from '../modules/prisma-audit-log.service';
+import { PrismaInstanceConfigService } from '../modules/prisma-instance-config.service';
 import { PrismaTenantConfigService } from '../modules/prisma-tenant-config.service';
 import { SecretCipherService } from '../modules/secret-cipher.service';
 import { SmtpAdapterService } from '../modules/smtp-adapter.service';
@@ -20,6 +21,8 @@ import { ApiKeyService } from './api-key.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { JwtOrProvisioningGuard } from './jwt-or-provisioning.guard';
+import { ProvisioningCredentialService } from './provisioning-credential.service';
 import { MfaController } from './mfa.controller';
 import { MfaPolicyController } from './mfa-policy/mfa-policy.controller';
 import { MfaPolicyService } from './mfa-policy/mfa-policy.service';
@@ -78,11 +81,26 @@ function loadCipherKeyForAuth(): string {
     ApiKeyService,
     JwtAuthGuard,
     JwtOrApiKeyGuard,
+    // UC-C103 — credencial de INSTANCIA para el plano de control. Vive aquí y
+    // no en InstanceSettingsModule porque ese módulo importa AuthModule (para
+    // TokenService): al revés sería un ciclo.
+    JwtOrProvisioningGuard,
+    ProvisioningCredentialService,
     PrismaAuditLogService,
     SmtpAdapterService,
     {
       provide: SecretCipherService,
       useFactory: () => new SecretCipherService(loadCipherKeyForAuth()),
+    },
+    // Instancia propia de PrismaInstanceConfigService, mismo criterio que
+    // SecretCipherService: el servicio no tiene estado (lee y escribe
+    // `core_instance_setting`) y comparte la key de `loadCipherKey()`, así que
+    // lo que cifra una copia lo descifra la otra.
+    {
+      provide: PrismaInstanceConfigService,
+      inject: [PrismaService, SecretCipherService],
+      useFactory: (prisma: PrismaService, cipher: SecretCipherService) =>
+        new PrismaInstanceConfigService(prisma, cipher),
     },
     // PrismaTenantConfigService recibe AuditLogService (interface del kernel)
     // como tercer arg. NestJS DI no puede resolver una interface, así que
@@ -138,6 +156,10 @@ function loadCipherKeyForAuth(): string {
     ApiKeyService,
     JwtAuthGuard,
     JwtOrApiKeyGuard,
+    // Exportados para AdminModule: el guard protege AdminTenantsController y
+    // el service respalda AdminProvisioningController.
+    JwtOrProvisioningGuard,
+    ProvisioningCredentialService,
     PrismaAuditLogService,
     // Exportado para que el AdminModule pueda inyectar el config service
     // en CustomDomainsService (cuarto piloto License SDK) sin reproveerlo.
