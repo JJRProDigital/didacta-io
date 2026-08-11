@@ -1,1 +1,14 @@
+# Sin coautoría de IA en la historia del repo.
+# Los asistentes de código añaden por defecto un trailer «Co-Authored-By» que
+# GitHub convierte en un contributor más. Se retira siempre, venga de un commit
+# nuevo, de un --amend, de un rebase o de un squash.
+# El patrón va anclado a principio de línea: así retira el trailer real y no
+# toca un mensaje que solo hable de él.
+patron='^[[:space:]]*(co-authored-by:.*(anthropic|claude)|(🤖[[:space:]]*)?generated with \[claude code\])'
+if grep -qiE "$patron" "$1"; then
+	limpio=$(grep -viE "$patron" "$1" || true)
+	printf '%s\n' "$limpio" >"$1"
+	echo "commit-msg: retirada la coautoría de IA del mensaje"
+fi
+
 pnpm commitlint --edit "$1"
