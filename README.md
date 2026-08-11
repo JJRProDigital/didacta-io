@@ -7,17 +7,37 @@
 [![Versioning](https://img.shields.io/badge/versioning-SemVer-green)](https://semver.org)
 ![Stage](https://img.shields.io/badge/stage-alpha-red)
 [![Web](https://img.shields.io/badge/web-didacta.io-black)](https://didacta.io)
+[![Creado por VA360 LABS](https://img.shields.io/badge/creado%20por-VA360%20LABS-1f2937)](https://va360labs.com)
+
+Creado y mantenido por **[VA360 LABS S.L.](https://va360labs.com)**, autora
+original del proyecto.
+
+## Enlaces de interés
+
+|                               |                                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+| 🌐 **Producto y precios**     | [didacta.io](https://didacta.io) · [ediciones y precios](https://didacta.io/es/pricing)                 |
+| 📚 **Documentación**          | [docs.didacta.io](https://docs.didacta.io) — instalación, actualización, operación y versionado (es/en) |
+| 📦 **Imagen oficial**         | `ghcr.io/va360labs/didacta-community`                                                                   |
+| 📋 **Versiones publicadas**   | [Releases](https://github.com/va360labs/didacta-io/releases)                                            |
+| ⚖️ **Licencia, en cristiano** | [didacta.io/es/license](https://didacta.io/es/license) · [`LICENSE_NOTICE.md`](LICENSE_NOTICE.md)       |
+| 🏢 **Quién lo hace**          | [va360labs.com](https://va360labs.com)                                                                  |
 
 ## Estado actual
 
-🚧 **Alpha** — entre mayo y julio de 2026 el producto maduró sirviendo en
-producción real a su primer despliegue (congelado en el tag
-`v0.0.1-alpha.88-va360`); desde el 31 de julio de 2026 el repo vuelve a ser el
-producto whitelabel y prepara su primera versión pública. Guías de
-instalación, actualización y versionado en la documentación oficial:
-[docs.didacta.io](https://docs.didacta.io).
+🚧 **Alpha.** El producto maduró entre mayo y julio de 2026 sirviendo en
+producción real a su primer despliegue; desde el 31 de julio de 2026 el repo
+es el producto whitelabel y prepara su primera versión pública. Guías de
+instalación, actualización y versionado en
+[docs.didacta.io](https://docs.didacta.io); el historial de cada versión, en
+[Releases](https://github.com/va360labs/didacta-io/releases).
 
-Imagen oficial publicada en GitHub Container Registry: `ghcr.io/va360labs/didacta-community`. **Pública** — no requiere `docker login`. El espejo en [Docker Hub](https://hub.docker.com/r/didactaio/community) (`didactaio/community`) todavía no está activo.
+Imagen oficial en GitHub Container Registry:
+`ghcr.io/va360labs/didacta-community`. **Pública** — no requiere
+`docker login`, y es la única fuente al día. El espejo en
+[Docker Hub](https://hub.docker.com/r/didactaio/community)
+(`didactaio/community`) existe pero está **desactualizado** (se quedó en
+`0.0.1-alpha.86`): no lo uses para desplegar.
 
 ## Verificar acceso a la imagen
 
@@ -61,7 +81,8 @@ cp .env.example .env
 #    - node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 #    Edita .env y completa AUTH_SECRET=...
 
-# 4. Fijar la versión de la imagen (tags publicados en Docker Hub)
+# 4. Fijar la versión de la imagen (las publicadas están en Releases:
+#    https://github.com/va360labs/didacta-io/releases)
 echo "DIDACTA_IMAGE_TAG=<versión>" >> .env
 
 # 5. Arrancar
@@ -169,6 +190,12 @@ docker logs didacta-app | grep "Setup token"  # token de un solo uso para /setup
 
 Didacta es un LMS (Learning Management System) **fair-code de nueva generación**: código fuente disponible bajo la [Didacta Sustainable Use License v1.0](LICENSE), arquitectura modular, sin licencias por usuario y con cumplimiento legal integrado en el núcleo. Diseñado para academias, formadores y organizaciones que quieren operar su propia plataforma de formación con control total.
 
+Lo crea y lo mantiene **[VA360 LABS S.L.](https://va360labs.com)**, autora
+original del proyecto y titular de la marca. El código es de quien lo
+despliegue —audítalo, modifícalo, úsalo internamente sin pedir permiso—; la
+dirección del proyecto se queda con quien lo empezó, que es lo que significa
+fair-code.
+
 Más información y demo en vivo: [didacta.io](https://didacta.io).
 
 ### Por qué Didacta
@@ -192,21 +219,21 @@ Y si tu comunidad exige aprobación previa, activa el **registro con solicitud**
 
 ### Tres ediciones, mismo producto
 
-| Edición                   | Para quién                                                            | Incluye                                                                                                           |
-| ------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Community** (este repo) | Equipos que despliegan y operan ellos mismos.                         | Todo el código fuente. Comunidad activa de contribuidores.                                                        |
-| **Cloud**                 | Quien quiere arrancar en minutos, sin infraestructura.                | Hosting gestionado por VA360 LABS con actualizaciones sin intervención. **En preparación.**                       |
-| **Enterprise**            | Organizaciones con SLA, integraciones a medida y partner certificado. | Account manager dedicado, onboarding guiado, integraciones con sistemas existentes, infraestructura monitorizada. |
+| Edición                   | Para quién                                                            | Incluye                                                                                                              |
+| ------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Community** (este repo) | Equipos que despliegan y operan ellos mismos.                         | Todo el código fuente. Comunidad activa de contribuidores.                                                           |
+| **Cloud**                 | Quien quiere arrancar en minutos, sin infraestructura.                | Hosting gestionado por [VA360 LABS](https://va360labs.com) con actualizaciones sin intervención. **En preparación.** |
+| **Enterprise**            | Organizaciones con SLA, integraciones a medida y partner certificado. | Account manager dedicado, onboarding guiado, integraciones con sistemas existentes, infraestructura monitorizada.    |
 
-Detalles y precios: [didacta.io](https://didacta.io).
+Detalles y precios: [didacta.io/es/pricing](https://didacta.io/es/pricing).
 
 ## Modelo de licencias
 
 Didacta es **fair-code**: source-available, uso interno empresarial libre, distribución comercial / SaaS de terceros bajo acuerdo. Modelo Open-Core con capabilities Enterprise protegidas:
 
-- **Repo + módulos**: [Didacta Sustainable Use License v1.0](LICENSE) (fair-code, adaptada de n8n SUL). Permite uso interno empresarial libre. Distribución comercial / SaaS / white-label requiere acuerdo con VA360 LABS S.L.
+- **Repo + módulos**: [Didacta Sustainable Use License v1.0](LICENSE) (fair-code, adaptada de n8n SUL). Permite uso interno empresarial libre. Distribución comercial / SaaS / white-label requiere acuerdo con [VA360 LABS S.L.](https://va360labs.com)
 - **Capabilities Enterprise** (archivos `*.ee.*` dentro del CORE): [Didacta Enterprise License](LICENSE_EE). Requieren licencia firmada activa para usarse en producción.
-- **Cloud**: SaaS gestionado por VA360 (`cloud.didacta.io`).
+- **Cloud**: SaaS gestionado por [VA360 LABS](https://va360labs.com). **En preparación**, todavía no abierto.
 
 Resumen humano: [`LICENSE_NOTICE.md`](LICENSE_NOTICE.md). Política de uso comercial: [`COMMERCIAL_USE.md`](COMMERCIAL_USE.md). Marca registrada: [`TRADEMARKS.md`](TRADEMARKS.md). Dudas de licensing: `licensing@didacta.io`.
 
@@ -251,8 +278,8 @@ Aparte existe un **registro opt-in** voluntario (Administración → Registro) d
 
 ## Licencia
 
-Didacta Community © 2026 VA360 LABS S.L. — distribuido bajo [Didacta Sustainable Use License v1.0](LICENSE) (fair-code).
+Didacta Community © 2026 [VA360 LABS S.L.](https://va360labs.com) — creadora original del proyecto. Distribuido bajo [Didacta Sustainable Use License v1.0](LICENSE) (fair-code).
 
 Capabilities Enterprise: [Didacta Enterprise License](LICENSE_EE).
 
-Didacta™ es una marca de VA360 LABS S.L. Ver [`TRADEMARKS.md`](TRADEMARKS.md).
+Didacta™ es una marca de [VA360 LABS S.L.](https://va360labs.com) Ver [`TRADEMARKS.md`](TRADEMARKS.md).
