@@ -71,10 +71,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    # Suite unit (`pnpm test` → `turbo run test`, ~2000 tests). No requiere
+    # Suite unit (`pnpm test` → `turbo run test`, ~2400 tests). No requiere
     # Postgres/Redis reales — los tests que sí los necesitan viven bajo
     # `tests/integration/**` o `*.integration.test.ts` y quedan excluidos por
     # `vitest.config.ts` (ver integration.yml, workflow_dispatch-only).
+    #
+    # Aquí viaja también el CONTRATO con `didacta-cloud`
+    # (`apps/api/tests/contract/**`), que fija ruta, campos y códigos de error
+    # de las 7 operaciones sobre tenants de las que depende un plano de
+    # control externo. Sustituye al shadow build cross-repo, que necesitaba un
+    # PAT y permisos de organización que nunca funcionaron. Si algún día se
+    # estrecha el glob de vitest, ese contrato deja de correr sin avisar.
 
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}

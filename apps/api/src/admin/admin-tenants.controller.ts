@@ -30,7 +30,11 @@ import type { SessionClaims } from '../auth/token.service';
 import { ZodValidationPipe } from '../auth/zod-validation.pipe';
 import { AdminTenantsService, type TenantUsageItem } from './admin-tenants.service';
 
-const createTenantSchema = z.object({
+// Los schemas de las rutas de la lista blanca se exportan para que
+// `tests/contract/admin-tenants.contract.test.ts` fije la forma de la petición
+// —nombres de campo incluidos— sin duplicarla a mano. Míralo antes de
+// tocarlos: son contrato con `didacta-cloud`.
+export const createTenantSchema = z.object({
   slug: z.string().min(1).max(64),
   name: z.string().min(1).max(120),
   adminEmail: z.string().email().max(200),
@@ -39,7 +43,7 @@ const createTenantSchema = z.object({
 });
 type CreateTenantDto = z.infer<typeof createTenantSchema>;
 
-const setStatusSchema = z.object({
+export const setStatusSchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED', 'ARCHIVED']),
 });
 type SetStatusDto = z.infer<typeof setStatusSchema>;
@@ -49,7 +53,7 @@ const renameSchema = z.object({
 });
 type RenameDto = z.infer<typeof renameSchema>;
 
-const domainSchema = z.object({
+export const domainSchema = z.object({
   hostname: z.string().min(1).max(253),
 });
 type DomainDto = z.infer<typeof domainSchema>;
