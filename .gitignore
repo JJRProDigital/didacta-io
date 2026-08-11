@@ -101,5 +101,15 @@ evidencias/
 doc/
 apps/e2e/test-results-demo-nav/
 
+# Arnés de vídeo de demostración: herramienta interna, se queda SIEMPRE fuera
+# del repositorio público. `playwright.demo.config.ts` va con él porque su
+# testDir apunta a ./demo.
+apps/e2e/demo/
+apps/e2e/playwright.demo.config.ts
+
+# Su salida: grabaciones, montaje y una instalación real completa. Contiene el
+# .env generado y el token de un solo uso del asistente — nunca al repo.
+apps/e2e/demo-output/
+
 # Estado de ejecución del arnés E2E (scripts/e2e-stack.sh): logs y PIDs.
 .e2e-stack/

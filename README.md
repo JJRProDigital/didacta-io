@@ -48,7 +48,48 @@ Imagen oficial en GitHub Container Registry:
 docker pull ghcr.io/va360labs/didacta-community:<versión>
 ```
 
-Si se descarga sin pedir credenciales, ya puedes seguir cualquiera de los dos caminos de despliegue descritos abajo.
+Si se descarga sin pedir credenciales, ya puedes seguir cualquiera de los caminos de despliegue descritos abajo.
+
+## Instalación en un comando
+
+La vía rápida. Requiere **Docker** y el plugin **Docker Compose v2** (`docker compose`), nada más.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/va360labs/didacta-io/main/install.sh | bash
+```
+
+El instalador descarga el compose, **genera tu `AUTH_SECRET`**, fija la versión de la imagen, levanta el stack, espera a que responda y termina imprimiendo **el enlace del asistente de configuración con su token** — que es donde se atasca todo el mundo la primera vez, porque si no hay que ir a buscarlo a los logs.
+
+No pregunta nada y no pisa nada: si ya existe un `.env` con `AUTH_SECRET`, lo reutiliza en vez de regenerarlo (regenerarlo echaría a todos los usuarios de su sesión sin avisar).
+
+Ejecutar un script de internet a ciegas no es buena idea con ningún instalador, así que puedes leerlo antes:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/va360labs/didacta-io/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
+
+Al terminar tendrás una carpeta `didacta/` con el `docker-compose.alpha.yml` y el `.env` generado. A partir de ahí se opera como cualquier instalación de compose.
+
+**Variables opcionales**, todas con valor por defecto razonable:
+
+| Variable               | Para qué                                                     | Default       |
+| ---------------------- | ------------------------------------------------------------ | ------------- |
+| `DIDACTA_DIR`          | Carpeta donde instalar                                       | `didacta`     |
+| `DIDACTA_IMAGE_TAG`    | Versión de la imagen a desplegar                             | la del script |
+| `WEB_PORT`             | Puerto de la web                                             | `3000`        |
+| `API_PORT`             | Puerto de la API                                             | `4000`        |
+| `MAILPIT_UI_PORT`      | Puerto de Mailpit                                            | `8025`        |
+| `DIDACTA_PROJECT`      | Nombre del proyecto de compose, para convivir con otra copia | —             |
+| `DIDACTA_COMPOSE_FILE` | Usar un compose local en vez de descargarlo                  | —             |
+
+```bash
+# Ejemplo: instalar en ./aula, con la web en el 8080
+DIDACTA_DIR=aula WEB_PORT=8080 bash install.sh
+```
+
+Si prefieres hacerlo a mano, o ya tienes Postgres y Redis administrados, sigue el Camino A o el B.
 
 ## Variables de entorno obligatorias
 

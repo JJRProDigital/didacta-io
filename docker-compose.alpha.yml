@@ -35,11 +35,14 @@ services:
       - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Inicialización idempotente de extensiones (uuid-ossp, pgcrypto, vector).
-      # Postgres ejecuta scripts en /docker-entrypoint-initdb.d/ SOLO la primera
-      # vez que crea el cluster. Si vuelves a tocar el SQL hay que recrear el
-      # volumen postgres_data (docker compose down -v).
-      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      # Sin bind mount de init.sql a propósito. Las extensiones (uuid-ossp,
+      # pgcrypto, vector) las crea la migración baseline de Prisma al arrancar
+      # la app (20260731120000_baseline_faircode), con CREATE EXTENSION IF NOT
+      # EXISTS — idempotente y sin depender de que el cluster sea nuevo.
+      #
+      # Montar ./infra/docker/postgres/init.sql ataba este compose al árbol del
+      # repositorio y rompía la instalación de un comando: install.sh crea una
+      # carpeta nueva donde ese fichero no existe.
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-didacta} -d ${POSTGRES_DB:-didacta}']
       interval: 5s
