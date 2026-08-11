@@ -19,6 +19,7 @@ import { ApiHttpError } from '@/lib/api-client';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
 import { formatDate } from '@/lib/i18n/format';
 import { coursesApi, type Course } from '@/lib/courses';
+import { richHtmlToPlainText } from '@/lib/sanitize-html';
 
 export default function FormadorCoursesPage() {
   const t = useTranslations('formadorCursos');
@@ -133,8 +134,10 @@ export default function FormadorCoursesPage() {
                 </div>
                 <CardContent className="space-y-3 p-5">
                   <p className="font-mono text-xs text-text-subtle">/{c.slug}</p>
+                  {/* Texto plano: la descripción es HTML del editor rich-text y
+                      aquí va recortada a dos líneas, igual que en `course-card`. */}
                   <p className="line-clamp-2 text-sm leading-relaxed text-text-muted">
-                    {c.description ?? t('noDescription')}
+                    {c.description ? richHtmlToPlainText(c.description) : t('noDescription')}
                   </p>
                   <div className="flex items-center justify-between border-t border-border-soft pt-3 text-xs text-text-subtle">
                     <span className="tabular-nums">

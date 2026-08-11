@@ -25,6 +25,7 @@ import { authStorage } from '@/lib/auth-storage';
 import { formatDuration } from '@/lib/i18n/format';
 import { useTenantContext } from '@/lib/tenant-context';
 import { formatCents } from '@/lib/membership';
+import { sanitizeRichHtml } from '@/lib/sanitize-html';
 import {
   featuredOption,
   getPublicCatalog,
@@ -146,10 +147,15 @@ export function FichaVentaView() {
           <h1 className="font-display text-3xl font-bold tracking-tight text-text">
             {course.title}
           </h1>
+          {/* La descripción se guarda como HTML (la escribe el editor rich-text
+              del formador), así que hay que renderizarla como tal — igual que
+              hace la ficha autenticada en (app)/cursos/[slug]. Pintándola como
+              texto plano, el comprador veía las etiquetas «<p>» en crudo. */}
           {course.description ? (
-            <p className="whitespace-pre-line leading-relaxed text-text-muted">
-              {course.description}
-            </p>
+            <div
+              className="prose prose-slate max-w-none leading-relaxed prose-p:text-text-muted prose-a:text-brand-700"
+              dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(course.description) }}
+            />
           ) : null}
         </div>
 

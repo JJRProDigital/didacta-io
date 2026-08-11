@@ -23,6 +23,7 @@ import { formatDuration } from '@/lib/i18n/format';
 import { useTenantContext } from '@/lib/tenant-context';
 import { formatCents } from '@/lib/membership';
 import { featuredOption, getPublicCatalog, type CatalogCourse } from '@/lib/catalog';
+import { richHtmlToPlainText } from '@/lib/sanitize-html';
 
 export function CatalogoView() {
   const t = useTranslations('publicSite');
@@ -171,8 +172,14 @@ export function CatalogoView() {
                     <h2 className="font-semibold text-text group-hover:text-brand-700">
                       {course.title}
                     </h2>
+                    {/* Texto plano, no HTML: la descripción viene del editor
+                        rich-text y aquí va recortada a dos líneas. Renderizar
+                        HTML dentro de un line-clamp descuadra la tarjeta, y
+                        pintarlo tal cual enseñaba las etiquetas al comprador. */}
                     {course.description ? (
-                      <p className="line-clamp-2 text-sm text-text-muted">{course.description}</p>
+                      <p className="line-clamp-2 text-sm text-text-muted">
+                        {richHtmlToPlainText(course.description)}
+                      </p>
                     ) : null}
                     <div className="mt-auto flex items-end justify-between pt-3">
                       {option ? (

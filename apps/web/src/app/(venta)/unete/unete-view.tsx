@@ -37,6 +37,7 @@ import {
   type MembershipPage,
 } from '@/lib/membership';
 import { getStoredReferralCode, referralsApi, storeReferralCode } from '@/lib/referrals';
+import { richHtmlToPlainText } from '@/lib/sanitize-html';
 
 /** Paleta rotativa (por hash del nombre) para los pills de categoría. */
 const CATEGORY_STYLES = [
@@ -713,8 +714,12 @@ function CourseCardWithDetail({
               {meta ? <span className="text-[13px] text-text-muted">{meta}</span> : null}
             </div>
             <h4 className="mb-2 mt-3 text-xl font-bold">{course.title}</h4>
+            {/* Texto plano por lo mismo que en la tarjeta del catálogo: la
+                descripción es HTML del editor y aquí se lista en compacto. */}
             {course.description ? (
-              <p className="mb-3.5 max-w-2xl text-sm leading-[22px]">{course.description}</p>
+              <p className="mb-3.5 max-w-2xl text-sm leading-[22px]">
+                {richHtmlToPlainText(course.description)}
+              </p>
             ) : null}
             {course.moduleTitles.length > 0 && (
               <div className="mb-4 flex flex-wrap gap-2">
