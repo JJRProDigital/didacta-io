@@ -56,7 +56,7 @@ Solo **3 variables de entorno** son estrictamente obligatorias para arrancar. El
 
 | Variable       | Qué es                                                                  | Cómo generarla                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | -------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL` | Connection string de Postgres 16 con la extensión `pgvector` instalada. | Apunta a tu Postgres. Para compose: `postgresql://didacta:didacta_dev@postgres:5432/didacta?schema=public`.                                                                                                                                                                                                                                                                                                                                  |
+| `DATABASE_URL` | Connection string de Postgres 16 con la extensión `pgvector` instalada. | Apunta a tu Postgres. Formato: `postgresql://<USUARIO>:<CONTRASEÑA>@<HOST>:5432/didacta?schema=public`. Con el compose de este repo se construye sola a partir de `POSTGRES_USER` y `POSTGRES_PASSWORD`.                                                                                                                                                                                                                                     |
 | `REDIS_URL`    | Connection string de Redis 7.                                           | Apunta a tu Redis. Para compose: `redis://redis:6379`.                                                                                                                                                                                                                                                                                                                                                                                       |
 | `AUTH_SECRET`  | Secreto para firmar sesiones y cookies. Mínimo 32 caracteres.           | Cualquier cadena aleatoria de **32+ caracteres** sirve. Opciones: 1) un generador online de contraseñas con longitud 40+; 2) un gestor de contraseñas como 1Password o Bitwarden → "Generar contraseña" de 40 caracteres; 3) `openssl rand -base64 32`; 4) `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Lo importante: que sea aleatoria y que la guardes. Si la cambias, todas las sesiones se invalidan. |
 
@@ -157,9 +157,9 @@ docker run -d \
   -p 3000:3000 \
   -p 4000:4000 \
   -v didacta_data:/app/data \
-  -e DATABASE_URL='postgresql://USER:PASS@HOST:5432/didacta?schema=public' \
-  -e REDIS_URL='redis://HOST:6379' \
-  -e AUTH_SECRET='cualquier-cadena-aleatoria-de-32+-caracteres' \
+  -e DATABASE_URL='postgresql://<USUARIO>:<CONTRASEÑA>@<HOST>:5432/didacta?schema=public' \
+  -e REDIS_URL='redis://<HOST>:6379' \
+  -e AUTH_SECRET='<tu-cadena-aleatoria-de-32+-caracteres>' \
   -e STORAGE_DRIVER=local \
   -e STORAGE_ROOT=/app/data/storage \
   -e NODE_ENV=production \

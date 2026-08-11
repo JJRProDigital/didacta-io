@@ -58,7 +58,7 @@ documented in [`.env.example`](.env.example).
 
 | Variable       | What it is                                                             | How to generate it                                                                                                                                                                                                                                                                                                                                    |
 | -------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL` | Postgres 16 connection string with the `pgvector` extension installed. | Point it at your Postgres. For compose: `postgresql://didacta:didacta_dev@postgres:5432/didacta?schema=public`.                                                                                                                                                                                                                                       |
+| `DATABASE_URL` | Postgres 16 connection string with the `pgvector` extension installed. | Point it at your Postgres. Format: `postgresql://<USER>:<PASSWORD>@<HOST>:5432/didacta?schema=public`. With this repo's compose it is built for you from `POSTGRES_USER` and `POSTGRES_PASSWORD`.                                                                                                                                                     |
 | `REDIS_URL`    | Redis 7 connection string.                                             | Point it at your Redis. For compose: `redis://redis:6379`.                                                                                                                                                                                                                                                                                            |
 | `AUTH_SECRET`  | Secret used to sign sessions and cookies. Minimum 32 characters.       | Any random string of **32+ characters** works: an online password generator set to 40+, your password manager's "generate password", `openssl rand -base64 32`, or `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. What matters is that it is random and that you keep it. Change it and every session is invalidated. |
 
@@ -167,9 +167,9 @@ docker run -d \
   -p 3000:3000 \
   -p 4000:4000 \
   -v didacta_data:/app/data \
-  -e DATABASE_URL='postgresql://USER:PASS@HOST:5432/didacta?schema=public' \
-  -e REDIS_URL='redis://HOST:6379' \
-  -e AUTH_SECRET='any-random-string-of-32+-characters' \
+  -e DATABASE_URL='postgresql://<USER>:<PASSWORD>@<HOST>:5432/didacta?schema=public' \
+  -e REDIS_URL='redis://<HOST>:6379' \
+  -e AUTH_SECRET='<your-random-string-of-32+-characters>' \
   -e STORAGE_DRIVER=local \
   -e STORAGE_ROOT=/app/data/storage \
   -e NODE_ENV=production \
