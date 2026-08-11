@@ -9,6 +9,8 @@
 [![Web](https://img.shields.io/badge/web-didacta.io-black)](https://didacta.io)
 [![Creado por VA360 LABS](https://img.shields.io/badge/creado%20por-VA360%20LABS-1f2937)](https://va360labs.com)
 
+🌍 **Español** · [English](README.en.md)
+
 Creado y mantenido por **[VA360 LABS S.L.](https://va360labs.com)**, autora
 original del proyecto.
 
