@@ -187,7 +187,7 @@ Para operadores que ya tienen Postgres 16 + Redis 7 administrados y solo quieren
 - Las 3 variables de entorno obligatorias listadas arriba.
 
 ```bash
-docker pull ghcr.io/va360labs/didacta-community:0.0.1-alpha.103
+docker pull ghcr.io/va360labs/didacta-community:0.0.1-alpha.104
 
 # Crear volumen para uploads + clave de cifrado autogenerada.
 # El volumen sobrevive a reinicios.
@@ -205,7 +205,7 @@ docker run -d \
   -e STORAGE_ROOT=/app/data/storage \
   -e NODE_ENV=production \
   --restart unless-stopped \
-  ghcr.io/va360labs/didacta-community:0.0.1-alpha.103
+  ghcr.io/va360labs/didacta-community:0.0.1-alpha.104
 ```
 
 > El volumen `didacta_data` guarda los archivos subidos —cursos, certificados y evidencias— **y** una clave de cifrado autogenerada en el primer arranque para los secretos at-rest. Sin ese volumen montado, todo se borra al recrear el contenedor.

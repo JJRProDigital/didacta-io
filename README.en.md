@@ -197,7 +197,7 @@ run the application container.
 - The 3 required environment variables listed above.
 
 ```bash
-docker pull ghcr.io/va360labs/didacta-community:0.0.1-alpha.103
+docker pull ghcr.io/va360labs/didacta-community:0.0.1-alpha.104
 
 # Volume for uploads plus the auto-generated encryption key.
 # It survives restarts.
@@ -215,7 +215,7 @@ docker run -d \
   -e STORAGE_ROOT=/app/data/storage \
   -e NODE_ENV=production \
   --restart unless-stopped \
-  ghcr.io/va360labs/didacta-community:0.0.1-alpha.103
+  ghcr.io/va360labs/didacta-community:0.0.1-alpha.104
 ```
 
 > The `didacta_data` volume holds the uploaded files — courses, certificates
