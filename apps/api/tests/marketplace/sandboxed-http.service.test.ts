@@ -5,6 +5,7 @@ import {
   SandboxedHttpService,
   isHostAllowed,
   isPrivateIp,
+  stripIpv6Brackets,
 } from '../../src/marketplace/sandboxed-http.service';
 import { HttpError } from '../../src/marketplace/sandboxed-http.types';
 import type { ModuleHttpConfig } from '../../src/marketplace/module-manifest.schema';
@@ -172,11 +173,36 @@ describe('SandboxedHttpService — SSRF guard', () => {
       code: 'HTTP_BLOCKED_HOST',
     });
   });
+  // Por inspección del literal, NO por lo que diga el resolver del sistema:
+  // `URL.hostname` entrega `[::1]` con corchetes y `isIP` no los reconoce, así
+  // que sin quitarlos esto acababa en un DNS lookup. En Linux fallaba y daba
+  // HTTP_NETWORK; en Windows resolvía y el test pasaba. Mismo bloqueo, código
+  // distinto según la máquina.
   it('bloquea IPv6 loopback', async () => {
     const http = svc.build('mod.test', HTTP_OPEN);
     await expect(http.get('http://[::1]/x')).rejects.toMatchObject({
       code: 'HTTP_BLOCKED_HOST',
     });
+  });
+
+  it('bloquea IPv6 link-local y ULA en forma literal', async () => {
+    const http = svc.build('mod.test', HTTP_OPEN);
+    await expect(http.get('http://[fe80::1]/x')).rejects.toMatchObject({
+      code: 'HTTP_BLOCKED_HOST',
+    });
+    await expect(http.get('http://[fd00::1]/x')).rejects.toMatchObject({
+      code: 'HTTP_BLOCKED_HOST',
+    });
+  });
+});
+
+describe('stripIpv6Brackets', () => {
+  it('quita los corchetes solo cuando envuelven el host entero', () => {
+    expect(stripIpv6Brackets('[::1]')).toBe('::1');
+    expect(stripIpv6Brackets('[fe80::1]')).toBe('fe80::1');
+    expect(stripIpv6Brackets('127.0.0.1')).toBe('127.0.0.1');
+    expect(stripIpv6Brackets('example.com')).toBe('example.com');
+    expect(stripIpv6Brackets('[incompleto')).toBe('[incompleto');
   });
 });
 

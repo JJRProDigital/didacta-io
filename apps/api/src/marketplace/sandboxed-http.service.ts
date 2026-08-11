@@ -214,15 +214,27 @@ function assertHostAllowed(host: string, manifestHttp: ModuleHttpConfig): void {
   }
 }
 
+/// `[::1]` → `::1`. Deja intacto cualquier otra cosa.
+export function stripIpv6Brackets(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+}
+
 /// SSRF guard. Bloquea privadas/loopback/link-local/IPv6 ULA. Si el host
 /// es ya una IP literal, la chequea directo; si es DNS name, hace lookup.
 /// Resolver IP también bloquea attacker-controlled DNS rebinding parcialmente
 /// — para defensa total habría que reusar la IP en el connect, pero `fetch`
 /// nativo no expone ese hook. El gap se mitiga con allowlist por host.
 async function assertNotPrivateIp(hostname: string): Promise<void> {
-  const literal = isIP(hostname);
+  // `URL.hostname` devuelve los literales IPv6 ENTRE CORCHETES (`[::1]`), y
+  // `isIP` no los reconoce así. Sin quitarlos, ningún literal IPv6 entraba
+  // nunca en esta rama: caía al DNS lookup de abajo y quedaba a merced del
+  // resolver del sistema. En Linux `getaddrinfo('[::1]')` falla, así que la
+  // petición moría con HTTP_NETWORK en vez de bloquearse — fallaba cerrado,
+  // pero por accidente y con el código equivocado.
+  const bare = stripIpv6Brackets(hostname);
+  const literal = isIP(bare);
   if (literal === 4 || literal === 6) {
-    if (isPrivateIp(hostname)) {
+    if (isPrivateIp(bare)) {
       throw new HttpError(
         'HTTP_BLOCKED_HOST',
         `IP privada/reservada bloqueada por SSRF guard: ${hostname}`,
