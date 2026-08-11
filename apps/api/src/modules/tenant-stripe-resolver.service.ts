@@ -33,6 +33,16 @@ export interface ResolvedStripeCredentials {
 }
 
 /**
+ * Lector del candado `billing.allowGlobalStripeFallback` (`instance_setting`).
+ * Se inyecta como función y no como servicio para no arrastrar el grafo de DI
+ * hasta aquí: este resolutor se construye A MANO en `ModuleRegistryService`.
+ */
+export type GlobalFallbackFlagReader = () => Promise<boolean>;
+
+/** Cuánto se cachea el candado. `resolve()` corre en cada checkout y en cada webhook. */
+const FLAG_CACHE_MS = 60_000;
+
+/**
  * Resolutor centralizado de credenciales Stripe por tenant.
  *
  * Mismo patrón que `TenantSmtpResolverService`:
@@ -42,6 +52,15 @@ export interface ResolvedStripeCredentials {
  *    → fallback de instancia (cubre despliegues que aún no migraron al panel).
  * 3. Si nada de lo anterior aplica → `null`.
  *
+ * ⚠️ El escalón 2 es un camino HEREDADO. En un despliegue multi-tenant de verdad
+ * —un pool donde conviven academias de distintos dueños— heredar la clave de
+ * `STRIPE_SECRET_KEY` significa que el dinero de los alumnos de un tenant sin
+ * configurar entra en la cuenta de Stripe del OPERADOR, en silencio y sin error.
+ * Por eso existe el candado `billing.allowGlobalStripeFallback`: por defecto
+ * `true` (no rompe a ningún self-hoster que hoy cobre por env), y a `false`
+ * el escalón 2 desaparece y el tenant sin credenciales propias resuelve a
+ * `null` → el checkout falla con un error claro en vez de cobrar mal.
+ *
  * NO loguea credenciales nunca. Solo `source`/`verified` para poder
  * correlacionar fallos con el origen real sin filtrar secretos.
  */
@@ -49,17 +68,54 @@ export interface ResolvedStripeCredentials {
 export class TenantStripeResolverService {
   private readonly logger = new Logger(TenantStripeResolverService.name);
 
-  constructor(private readonly tenantConfig: TenantConfigService) {}
+  private flagCache?: { value: boolean; expiresAt: number };
+
+  constructor(
+    private readonly tenantConfig: TenantConfigService,
+    private readonly readGlobalFallbackFlag?: GlobalFallbackFlagReader,
+  ) {}
 
   async resolve(tenantId: string): Promise<ResolvedStripeCredentials | null> {
     const tenantResolved = await this.readTenantConfig(tenantId);
     if (tenantResolved) return tenantResolved;
+
+    if (!(await this.globalFallbackAllowed())) return null;
 
     const globalCredentials = this.readGlobalConfig();
     if (globalCredentials) {
       return { credentials: globalCredentials, source: 'global', verified: false };
     }
     return null;
+  }
+
+  /** Invalida el cache del candado. Lo llama el panel al guardar el setting. */
+  invalidateGlobalFallbackFlag(): void {
+    this.flagCache = undefined;
+  }
+
+  /**
+   * ¿Se permite heredar las credenciales de instancia? Default `true` para no
+   * cambiar el comportamiento de nadie que actualice. Si la lectura falla se
+   * asume `true` por la misma razón: un problema de BD no puede convertirse en
+   * un corte de cobros.
+   */
+  private async globalFallbackAllowed(): Promise<boolean> {
+    if (!this.readGlobalFallbackFlag) return true;
+
+    const now = Date.now();
+    if (this.flagCache && this.flagCache.expiresAt > now) return this.flagCache.value;
+
+    let value = true;
+    try {
+      value = await this.readGlobalFallbackFlag();
+    } catch (err) {
+      this.logger.warn(
+        `[stripe-resolver] no se pudo leer billing.allowGlobalStripeFallback: ` +
+          `${(err as Error).message.slice(0, 200)}. Se asume permitido.`,
+      );
+    }
+    this.flagCache = { value, expiresAt: now + FLAG_CACHE_MS };
+    return value;
   }
 
   /** Variante solo-tenant, sin caer al fallback global — usada por el botón "Probar conexión" del panel. */

@@ -195,4 +195,86 @@ describe('TenantStripeResolverService', () => {
       expect(await r.hasTenantConfig(TENANT_A)).toBe(false);
     });
   });
+
+  /**
+   * UC-C101 — candado `billing.allowGlobalStripeFallback`.
+   *
+   * El fallback global existe para el self-hoster que aún cobra por env. En un
+   * pool multi-tenant es una trampa: el tenant que no configuró su Stripe
+   * cobraría en la cuenta del operador. El candado lo apaga.
+   */
+  describe('candado del fallback global (allowGlobalStripeFallback)', () => {
+    beforeEach(() => {
+      process.env['STRIPE_SECRET_KEY'] = 'sk_test_global';
+      process.env['STRIPE_WEBHOOK_SECRET'] = 'whsec_global';
+    });
+
+    it('SIN lector de flag el comportamiento no cambia (regresión del self-hoster)', async () => {
+      const config = makeTenantConfig();
+      const r = new TenantStripeResolverService(config as never);
+      const result = (await r.resolve(TENANT_B)) as ResolvedStripeCredentials;
+      expect(result.source).toBe('global');
+    });
+
+    it('flag a true → sigue heredando de la instancia', async () => {
+      const config = makeTenantConfig();
+      const r = new TenantStripeResolverService(config as never, async () => true);
+      const result = (await r.resolve(TENANT_B)) as ResolvedStripeCredentials;
+      expect(result.source).toBe('global');
+    });
+
+    it('flag a false → NO hereda aunque las env estén pobladas', async () => {
+      const config = makeTenantConfig();
+      const r = new TenantStripeResolverService(config as never, async () => false);
+      expect(await r.resolve(TENANT_B)).toBeNull();
+    });
+
+    it('flag a false pero el tenant TIENE lo suyo → sigue resolviendo con lo del tenant', async () => {
+      const config = makeTenantConfig();
+      config.seed(TENANT_A, 'billing', 'stripe', VALID_TENANT_CREDS);
+      const r = new TenantStripeResolverService(config as never, async () => false);
+      const result = (await r.resolve(TENANT_A)) as ResolvedStripeCredentials;
+      expect(result.source).toBe('tenant_unverified');
+      expect(result.credentials.secretKey).toBe('sk_test_tenantA');
+    });
+
+    it('si el lector revienta se asume permitido: un fallo de BD no corta los cobros', async () => {
+      const config = makeTenantConfig();
+      const r = new TenantStripeResolverService(config as never, async () => {
+        throw new Error('BD caída');
+      });
+      const result = (await r.resolve(TENANT_B)) as ResolvedStripeCredentials;
+      expect(result.source).toBe('global');
+    });
+
+    it('cachea el flag: resolve() corre en cada checkout y no puede ir a BD siempre', async () => {
+      const config = makeTenantConfig();
+      let lecturas = 0;
+      const r = new TenantStripeResolverService(config as never, async () => {
+        lecturas += 1;
+        return false;
+      });
+      await r.resolve(TENANT_B);
+      await r.resolve(TENANT_B);
+      await r.resolve(TENANT_B);
+      expect(lecturas).toBe(1);
+    });
+
+    it('invalidateGlobalFallbackFlag() vuelve a leer, para que guardar en el panel surta efecto', async () => {
+      const config = makeTenantConfig();
+      let permitido = false;
+      let lecturas = 0;
+      const r = new TenantStripeResolverService(config as never, async () => {
+        lecturas += 1;
+        return permitido;
+      });
+      expect(await r.resolve(TENANT_B)).toBeNull();
+
+      permitido = true;
+      r.invalidateGlobalFallbackFlag();
+      const result = (await r.resolve(TENANT_B)) as ResolvedStripeCredentials;
+      expect(result.source).toBe('global');
+      expect(lecturas).toBe(2);
+    });
+  });
 });
