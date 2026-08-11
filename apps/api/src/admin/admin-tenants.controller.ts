@@ -4,6 +4,7 @@
  */
 
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -12,6 +13,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -25,7 +27,7 @@ import { CurrentUser } from '../auth/decorators';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { SessionClaims } from '../auth/token.service';
 import { ZodValidationPipe } from '../auth/zod-validation.pipe';
-import { AdminTenantsService } from './admin-tenants.service';
+import { AdminTenantsService, type TenantUsageItem } from './admin-tenants.service';
 
 const createTenantSchema = z.object({
   slug: z.string().min(1).max(64),
@@ -84,6 +86,48 @@ export class AdminTenantsController {
   async capacity(@CurrentUser() user: SessionClaims | undefined) {
     requireSuperAdmin(user);
     return this.service.getCapacityInfo();
+  }
+
+  // OJO: `usage` va ANTES de `:id`, igual que `capacity`. Al revés, Fastify
+  // resolvería `/admin/tenants/usage` con el handler de `:id` e intentaría
+  // buscar un tenant llamado "usage".
+  @Get('usage')
+  @ApiOperation({
+    summary: 'Miembros activos por tenant a una fecha de corte. Solo super_admin.',
+    description: [
+      'Fuente de verdad del consumo por tenant. **La definición es contractual**: es la',
+      'misma que aparece en la página de precios de Didacta Cloud, y sobre ella se',
+      'calcula el tramo que paga cada cliente.',
+      '',
+      '**Cuenta**: usuario con acceso al aula, activo y no borrado.',
+      '',
+      '**No cuenta**: administradores del tenant (`tenant_admin`, `super_admin`),',
+      'invitaciones nunca aceptadas (`PENDING`), suspendidos (`SUSPENDED`), bajas',
+      '(`DEACTIVATED`) y borrados lógicos.',
+      '',
+      'Formadores, auditores y gestores de empresa **sí** cuentan: consumen la',
+      'plataforma igual que un alumno.',
+      '',
+      '`asOf` es una fecha ISO-8601 opcional; por defecto, ahora. Una fecha futura',
+      'devuelve 400 — no se factura sobre un consumo que aún no ha ocurrido.',
+    ].join('\n'),
+  })
+  async usage(
+    @CurrentUser() user: SessionClaims | undefined,
+    @Query('asOf') asOf?: string,
+  ): Promise<TenantUsageItem[]> {
+    requireSuperAdmin(user);
+    let cutoff: Date | undefined;
+    if (asOf !== undefined && asOf !== '') {
+      cutoff = new Date(asOf);
+      if (Number.isNaN(cutoff.getTime())) {
+        throw new BadRequestException({
+          message: 'El parámetro asOf no es una fecha ISO-8601 válida.',
+          code: 'ADMIN_TENANT_USAGE_ASOF_INVALID',
+        });
+      }
+    }
+    return this.service.getUsage(cutoff);
   }
 
   @Get(':id')

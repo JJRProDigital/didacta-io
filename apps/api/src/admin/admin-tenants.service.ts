@@ -15,6 +15,7 @@ import type { ClientContext } from '../auth/client-context';
 import { PasswordResetService } from '../auth/password-reset.service';
 import { PrismaAuditLogService } from '../modules/prisma-audit-log.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { runGlobalWithoutTenant } from '../tenancy/tenant-context.storage';
 
 const NO_CTX: ClientContext = { ip: null, userAgent: null };
 
@@ -53,6 +54,28 @@ export interface TenantCapacityInfo {
 
 /** Capacidad CE: 1 tenant por instancia (el del setup wizard). */
 const COMMUNITY_TENANT_LIMIT = 1;
+
+/**
+ * Consumo de un tenant a una fecha de corte. UC-C102.
+ *
+ * Lo consume el plano de control de Didacta Cloud para facturar por tramos, y
+ * cualquier self-hoster que quiera saber qué gasta cada tenant de su
+ * instalación. La definición de `activeMembers` vive en `getUsage()`.
+ */
+export interface TenantUsageItem {
+  tenantId: string;
+  slug: string;
+  activeMembers: number;
+  /** Fecha de corte aplicada, ISO-8601. Eco de la petición para que la factura sea auditable. */
+  asOf: string;
+}
+
+/**
+ * Roles que NO cuentan como miembro: son quien opera la academia, no quien la
+ * consume. Cobrar por el administrador que da de alta a los demás sería cobrar
+ * por el propio acto de administrar.
+ */
+const STAFF_ROLES: string[] = ['super_admin', 'tenant_admin'];
 
 /**
  * Servicio CRUD para super_admin sobre la tabla `tenant`.
@@ -100,17 +123,24 @@ export class AdminTenantsService {
   }
 
   async list(): Promise<TenantListItem[]> {
-    const tenants = await this.prisma.tenant.findMany({
-      where: { deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      include: { domains: true, _count: { select: { users: true } } },
-    });
-
-    // Course counts por tenant (consulta separada porque cursos viven en otra tabla).
-    const courseCounts = await this.prisma.modCoursesCourse.groupBy({
-      by: ['tenantId'],
-      _count: { id: true },
-    });
+    // `runGlobalWithoutTenant` no es decorativo. `tenant` es tabla global, pero
+    // `_count: { users }` y el groupBy de cursos pegan a tablas CON RLS, y esta
+    // petición llega con contexto de tenant (el middleware lo resuelve por
+    // Host). Sin salir del ALS, la extensión escopa esas dos subconsultas al
+    // tenant desde el que mira el super_admin: el panel enseñaba los usuarios y
+    // los cursos de SU tenant repetidos en todas las filas, sin error visible.
+    const { tenants, courseCounts } = await runGlobalWithoutTenant(async () => ({
+      tenants: await this.prisma.tenant.findMany({
+        where: { deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        include: { domains: true, _count: { select: { users: true } } },
+      }),
+      // Course counts por tenant (consulta separada porque cursos viven en otra tabla).
+      courseCounts: await this.prisma.modCoursesCourse.groupBy({
+        by: ['tenantId'],
+        _count: { id: true },
+      }),
+    }));
     const countByTenant = new Map(courseCounts.map((c) => [c.tenantId, c._count.id]));
 
     return tenants.map((t) => ({
@@ -132,17 +162,20 @@ export class AdminTenantsService {
   }
 
   async getDetail(id: string): Promise<TenantListItem> {
-    const t = await this.prisma.tenant.findFirst({
-      where: { id, deletedAt: null },
-      include: { domains: true, _count: { select: { users: true } } },
-    });
+    // Mismo motivo que en list(): el _count de usuarios y el count de cursos
+    // van contra tablas con RLS y esta petición trae contexto de otro tenant.
+    const { t, courseCount } = await runGlobalWithoutTenant(async () => ({
+      t: await this.prisma.tenant.findFirst({
+        where: { id, deletedAt: null },
+        include: { domains: true, _count: { select: { users: true } } },
+      }),
+      courseCount: await this.prisma.modCoursesCourse.count({ where: { tenantId: id } }),
+    }));
     if (!t)
       throw new NotFoundException({
         message: 'Tenant no encontrado.',
         code: 'ADMIN_TENANT_NOT_FOUND',
       });
-
-    const courseCount = await this.prisma.modCoursesCourse.count({ where: { tenantId: id } });
 
     return {
       id: t.id,
@@ -160,6 +193,62 @@ export class AdminTenantsService {
       userCount: t._count.users,
       courseCount,
     };
+  }
+
+  /**
+   * Miembros activos por tenant a una fecha de corte. UC-C102.
+   *
+   * Es la fuente de verdad de la facturación por tramos de Didacta Cloud, así
+   * que la definición de «miembro activo» está aquí, en un solo sitio, y es la
+   * misma que se publica en el Swagger y en la página de precios:
+   *
+   *   CUENTA     usuario con acceso al aula, activo y no borrado
+   *   NO CUENTA  administradores del tenant (`tenant_admin`, `super_admin`),
+   *              invitaciones nunca aceptadas (`PENDING`), suspendidos
+   *              (`SUSPENDED`), bajas (`DEACTIVATED`) y borrados lógicos
+   *
+   * Formadores, auditores y gestores de empresa SÍ cuentan: consumen la
+   * plataforma igual que un alumno. Si algún día cambia, se cambia aquí y en
+   * los dos textos de cara al cliente, nunca solo en uno.
+   */
+  async getUsage(asOf?: Date): Promise<TenantUsageItem[]> {
+    const cutoff = asOf ?? new Date();
+    if (cutoff.getTime() > Date.now()) {
+      throw new BadRequestException({
+        message: 'La fecha de corte no puede estar en el futuro.',
+        code: 'ADMIN_TENANT_USAGE_ASOF_IN_FUTURE',
+      });
+    }
+
+    // Cross-tenant real: sin salir del ALS esto devuelve los usuarios de UN
+    // solo tenant, o cero, y una factura calculada sobre eso es un cargo mal
+    // hecho. Ver runGlobalWithoutTenant.
+    return runGlobalWithoutTenant(async () => {
+      const tenants = await this.prisma.tenant.findMany({
+        where: { deletedAt: null, status: { not: 'ARCHIVED' } },
+        select: { id: true, slug: true },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      const grouped = await this.prisma.user.groupBy({
+        by: ['tenantId'],
+        where: {
+          deletedAt: null,
+          status: 'ACTIVE',
+          createdAt: { lte: cutoff },
+          NOT: { roles: { some: { role: { name: { in: STAFF_ROLES } } } } },
+        },
+        _count: { id: true },
+      });
+      const byTenant = new Map(grouped.map((g) => [g.tenantId, g._count.id]));
+
+      return tenants.map((t) => ({
+        tenantId: t.id,
+        slug: t.slug,
+        activeMembers: byTenant.get(t.id) ?? 0,
+        asOf: cutoff.toISOString(),
+      }));
+    });
   }
 
   /**

@@ -54,6 +54,31 @@ export function isSanctionedGlobalAccess(): boolean {
 }
 
 /**
+ * Acceso global sancionado DE VERDAD: sale del contexto de tenant y además lo
+ * marca como sancionado.
+ *
+ * `runSanctionedGlobalAccess` por sí solo NO basta en el camino de una petición
+ * HTTP. El middleware de tenancy ya resolvió un tenant por `Host`, así que el
+ * ALS tiene contexto: la extensión de enforcement toma la rama
+ * `ctx.tenantId` → `set_config('app.current_tenant_id', <ese tenant>)` y la
+ * query sale ESCOPADA a él. Para un listado cross-tenant eso no da un error:
+ * da números silenciosamente equivocados (los del tenant desde el que miras).
+ *
+ * Salir del ALS lleva a la rama `!ctx?.tenantId` que, al estar marcada como
+ * sancionada, envuelve la query en `SET LOCAL ROLE didacta_super` — el único
+ * bypass real, porque `didacta_app` es NOBYPASSRLS.
+ *
+ * Úsalo SOLO en operaciones legítimamente cross-tenant de super_admin o de
+ * infraestructura. Nunca en el camino de un usuario final.
+ *
+ * El await ocurre dentro de ambos scopes a propósito: una PrismaPromise es lazy
+ * y ejecuta su hook al esperarla (misma razón que en runSanctionedGlobalAccess).
+ */
+export async function runGlobalWithoutTenant<T>(fn: () => Promise<T> | T): Promise<T> {
+  return tenantContextStorage.exit(() => runSanctionedGlobalAccess(fn));
+}
+
+/**
  * Abre el contexto ALS de un tenant SIN gucApplied: la extensión RLS envuelve
  * cada query con su set_config. Es el patrón para caminos fuera del
  * middleware que YA conocen su tenant — endpoints públicos resueltos por
