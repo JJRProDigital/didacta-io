@@ -267,12 +267,16 @@ describe('AdminSystemController.healthDetail · cola de módulos y versión', ()
     // El orquestador sabe qué etiqueta pidió; esto dice qué está corriendo. Es
     // la diferencia entre creer que desplegaste y saberlo, y es lo que mide el
     // lag Community → Cloud.
+    //
+    // La versión de prueba es deliberadamente imposible: al cortar release se
+    // buscan las ocurrencias del número anterior con un grep, y una versión
+    // real aquí saldría en esa lista como si fuera un sitio que hay que subir.
     const previo = process.env['DIDACTA_CORE_VERSION'];
-    process.env['DIDACTA_CORE_VERSION'] = '0.0.1-alpha.105';
+    process.env['DIDACTA_CORE_VERSION'] = '9.9.9-solo-para-este-test';
     try {
       const c = makeController({ redisStatus: 'ok', storageKind: 'local' });
       const r = await c.healthDetail(ADMIN as never);
-      expect(r.version).toBe('0.0.1-alpha.105');
+      expect(r.version).toBe('9.9.9-solo-para-este-test');
     } finally {
       if (previo === undefined) delete process.env['DIDACTA_CORE_VERSION'];
       else process.env['DIDACTA_CORE_VERSION'] = previo;
