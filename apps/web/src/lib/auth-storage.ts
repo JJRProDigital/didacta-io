@@ -37,6 +37,20 @@ export interface StoredSession {
     onboardingCompletedAt?: string | null;
   };
   mfaRequired: boolean;
+  /**
+   * Acceso de soporte de vida corta (U8), si la sesión nació de un canje.
+   *
+   * Es solo la copia local de lo que devolvió el canje, para que el aula tenga
+   * algo que pintar en el primer render. **La fuente de verdad del aviso es el
+   * servidor** (`/auth/support-access/current`): esto vive en un almacén que
+   * quien tiene la sesión puede editar, y el aviso no puede depender de su
+   * buena voluntad.
+   */
+  support?: {
+    grantId: string;
+    reason: string;
+    expiresAt: string;
+  };
 }
 
 /**

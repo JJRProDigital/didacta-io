@@ -14,6 +14,7 @@ import { Icon } from '@/components/icon';
 import { LicenseProvider } from '@/components/license-provider';
 import { NotificationsBell } from '@/components/notifications-bell';
 import { NotificationsSetupBanner } from '@/components/notifications-setup-banner';
+import { SupportAccessBanner } from '@/components/support-access-banner';
 import { ReferralsPromoButton } from '@/components/referrals-promo-button';
 import { NotificationsProvider } from '@/components/notifications-provider';
 import { NotificationsToaster } from '@/components/notifications-toaster';
@@ -365,6 +366,11 @@ function Shell({
                 al primer scroll. Sin aviso, el resultado es idéntico al que
                 había: una cabecera pegada arriba. */}
             <div className="sticky top-0 z-(--z-sticky)">
+              {/* Va el PRIMERO y en rojo: mientras haya un acceso de soporte
+                  abierto, hay alguien de fuera dentro del aula de un cliente y
+                  eso no puede quedar por debajo de ningún otro aviso. No se
+                  puede cerrar. */}
+              <SupportAccessBanner />
               {/* Solo aparece si no hay ninguna salida de correo: sin SMTP el
                   producto parece ir bien mientras pierde en silencio las altas
                   y los restablecimientos de contraseña. */}

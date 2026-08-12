@@ -62,6 +62,7 @@ model Tenant {
   notifTemplates     NotificationTemplate[]
   tenantSettings     TenantSetting[]
   domains            TenantDomain[]
+  supportGrants      SupportAccessGrant[]
 
   @@index([slug])
   @@index([status])
@@ -410,6 +411,49 @@ model Session {
   @@index([userId])
   @@index([expiresAt])
   @@map("session")
+}
+
+/// Acceso de soporte de vida corta (U8).
+///
+/// Un operador —una persona con rol super_admin, o el plano de control del SaaS
+/// gestionado con su credencial de provisioning— abre una ventana breve para
+/// entrar en el aula de un tenant y diagnosticar un problema **sin pedirle la
+/// contraseña a nadie y sin hacerse pasar por una persona real**.
+///
+/// Cada fila es una concesión: un motivo escrito, quien la abrio, cuando caduca
+/// y si ya se canjeo. El token en claro no se guarda en ninguna parte — solo su
+/// SHA-256, igual que la credencial de provisioning y el token de setup.
+///
+/// La tabla nace vacia y ninguna instalacion existente cambia de comportamiento
+/// al migrar: mientras nadie emita una concesion, no hay acceso de soporte.
+model SupportAccessGrant {
+  id        String @id @default(uuid()) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  /// SHA-256 hex del token en claro. Unico: dos concesiones no pueden compartir token.
+  tokenHash String @unique @map("token_hash")
+  /// Obligatorio. Se escribe en el audit log del tenant y se le ensena al
+  /// cliente: un acceso de soporte sin motivo no es auditable.
+  reason    String @db.VarChar(280)
+
+  /// `user` (una persona con super_admin) o `provisioning` (el plano de control).
+  /// Mismo par que `AdminActor`, aplanado porque aqui no hay union types.
+  issuedByKind String @map("issued_by_kind") @db.VarChar(20)
+  issuedById   String @map("issued_by_id")
+
+  /// Nunca mas de 15 minutos por delante de `created_at`. Lo impone el codigo
+  /// (`support-access.ts`), no un default de columna.
+  expiresAt DateTime  @map("expires_at")
+  /// Se sella al canjear. Un solo uso: con esto puesto, el token ya no vale.
+  redeemedAt DateTime? @map("redeemed_at")
+  /// Sesion que abrio el canje, para poder cortarla al revocar.
+  sessionId  String?   @map("session_id") @db.Uuid
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, expiresAt])
+  @@map("support_access_grant")
 }
 
 model ApiKey {

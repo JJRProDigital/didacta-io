@@ -65,6 +65,42 @@ export class SessionRegistryService {
   }
 
   /**
+   * Abre la sesión de un acceso de soporte (U8) y devuelve su access token.
+   *
+   * Se registra en `session` como cualquier otra —y por eso se puede cortar en
+   * el acto revocando la concesión— pero con dos diferencias deliberadas:
+   * caduca cuando caduca la ventana (no a los 30 días del refresh) y no hay
+   * refresh token que guardar, así que lo que se hashea es el propio access
+   * token, que también es único.
+   */
+  async issueSupportAccess(
+    claims: Omit<SessionClaims, 'sid'> & { sup: string },
+    ttlSeconds: number,
+    ctx: ClientContext = { ip: null, userAgent: null },
+  ): Promise<{ accessToken: string; expiresIn: number; sid: string; expiresAt: Date }> {
+    const sid = randomUUID();
+    const { accessToken, expiresIn } = await this.tokens.signSupportAccess(
+      { ...claims, sid },
+      ttlSeconds,
+    );
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+
+    await this.prisma.session.create({
+      data: {
+        id: sid,
+        tenantId: claims.tenantId,
+        userId: claims.sub,
+        tokenHash: hashToken(accessToken),
+        expiresAt,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+      },
+    });
+
+    return { accessToken, expiresIn, sid, expiresAt };
+  }
+
+  /**
    * Rota los tokens de una sesión existente conservando su `sid`.
    *
    * Se usa en el refresh: si cada renovación creara una sesión nueva, la lista

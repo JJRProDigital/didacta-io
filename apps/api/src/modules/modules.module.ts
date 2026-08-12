@@ -32,6 +32,7 @@ import { ModuleAccessInterceptor } from './module-access.interceptor';
 import { ModuleContextFactory } from './module-context.factory';
 import { ModuleRegistryService } from './module-registry.service';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ModJobsQueueService } from '../marketplace/job-runner/mod-jobs.queue';
 import { OutboxQueueService } from './outbox-queue.service';
 import { OutboxRecoveryWorker } from './outbox-recovery.worker';
 import { ScormLearningBridge } from './scorm-learning.bridge';
@@ -101,6 +102,14 @@ import { OutboxMetrics, outboxMetricsProviders } from './outbox.metrics';
     ...outboxMetricsProviders,
     OutboxMetrics,
     OutboxQueueService,
+    // Las DOS colas del host viven aquí, una al lado de la otra. `mod-jobs`
+    // se proveía desde MarketplaceModule, que importa a éste; al necesitarla
+    // `AdminSystemController` —que también vive aquí— la alternativa era un
+    // ciclo de módulos con forwardRef en los dos sentidos para llegar a unos
+    // contadores. La clase es un envoltorio de BullMQ que solo depende del
+    // logger, así que su sitio natural es el módulo del host, y Marketplace la
+    // sigue resolviendo porque ya importa ModulesModule.
+    ModJobsQueueService,
     ModuleContextFactory,
     ModuleRegistryService,
     OutboxRecoveryWorker,
@@ -120,6 +129,7 @@ import { OutboxMetrics, outboxMetricsProviders } from './outbox.metrics';
   exports: [
     ModuleRegistryService,
     OutboxQueueService,
+    ModJobsQueueService,
     ModuleContextFactory,
     TenantModulesService,
     ModuleAccessInterceptor,

@@ -28,7 +28,9 @@ import { AllowProvisioning, CurrentUser } from '../auth/decorators';
 import { JwtOrProvisioningGuard } from '../auth/jwt-or-provisioning.guard';
 import type { SessionClaims } from '../auth/token.service';
 import { ZodValidationPipe } from '../auth/zod-validation.pipe';
+import { TenantResolverService } from '../tenancy/tenant-resolver.service';
 import { AdminTenantsService, type TenantUsageItem } from './admin-tenants.service';
+import { SupportAccessService } from './support-access.service';
 
 // Los schemas de las rutas de la lista blanca se exportan para que
 // `tests/contract/admin-tenants.contract.test.ts` fije la forma de la petición
@@ -65,6 +67,20 @@ export const signupsSchema = z.object({
 });
 type SignupsDto = z.infer<typeof signupsSchema>;
 
+export const supportAccessSchema = z.object({
+  /**
+   * Obligatorio y con cuerpo: es lo que lee el cliente en SU audit log cuando
+   * quiera saber por que entro alguien de soporte en su aula. «test» no vale.
+   */
+  reason: z.string().min(10).max(280),
+  /**
+   * Ventana pedida. Opcional; el techo de 15 min lo impone `clampTtlSeconds()`
+   * y no depende de que el llamante lo respete.
+   */
+  ttlSeconds: z.number().int().positive().optional(),
+});
+type SupportAccessDto = z.infer<typeof supportAccessSchema>;
+
 function requireSuperAdmin(user: SessionClaims | undefined): SessionClaims {
   if (!user) throw new UnauthorizedException();
   if (!user.roles.includes('super_admin')) {
@@ -97,7 +113,11 @@ function requireAdminActor(user: SessionClaims | undefined, req: FastifyRequest)
 @Controller('admin/tenants')
 @UseGuards(JwtOrProvisioningGuard)
 export class AdminTenantsController {
-  constructor(private readonly service: AdminTenantsService) {}
+  constructor(
+    private readonly service: AdminTenantsService,
+    private readonly supportAccess: SupportAccessService,
+    private readonly tenantResolver: TenantResolverService,
+  ) {}
 
   @Get()
   @AllowProvisioning()
@@ -264,6 +284,70 @@ export class AdminTenantsController {
       dto.reason,
       extractClientContext(req),
     );
+  }
+
+  @Post(':id/support-access')
+  @AllowProvisioning()
+  @ApiOperation({
+    summary: 'Abrir una ventana de acceso de soporte al aula del tenant. Motivo obligatorio.',
+    description: [
+      'Devuelve un token de **un solo uso** con caducidad de **15 minutos como máximo**',
+      '(`ttlSeconds` puede pedir menos, nunca más) y el enlace para canjearlo.',
+      '',
+      'El canje abre sesión como un **usuario de soporte propio del tenant**, visible en',
+      'su lista de miembros — nunca como una persona real: si soporte entrara con la',
+      'identidad del cliente, el audit log dejaría de valer como prueba de nada.',
+      '',
+      'Quedan dos filas en el audit log **del tenant**: la concesión (con el motivo y',
+      'quién la abrió) y el canje. El cliente las lee sin pedirle permiso a nadie.',
+      '',
+      'Mientras la sesión vive, el aula muestra un aviso permanente que no se puede',
+      'cerrar. `DELETE` sobre la concesión la corta antes de tiempo y cierra la sesión.',
+    ].join('\n'),
+  })
+  async grantSupportAccess(
+    @Req() req: FastifyRequest,
+    @CurrentUser() user: SessionClaims | undefined,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(supportAccessSchema)) dto: SupportAccessDto,
+  ) {
+    const actor = requireAdminActor(user, req);
+    // El enlace lleva un token: se resuelve con la variante endurecida, que
+    // prefiere el dominio primario verificado del tenant y NUNCA se fía del
+    // header Host sin allowlist.
+    const webBaseUrl = await this.tenantResolver.resolveTenantWebBaseUrlForAuthRedirect(id, req);
+    return this.supportAccess.grant(
+      actor,
+      id,
+      {
+        reason: dto.reason,
+        ...(dto.ttlSeconds !== undefined ? { ttlSeconds: dto.ttlSeconds } : {}),
+      },
+      webBaseUrl,
+      extractClientContext(req),
+    );
+  }
+
+  @Delete(':id/support-access/:grantId')
+  @AllowProvisioning()
+  @ApiOperation({
+    summary: 'Cerrar un acceso de soporte antes de que caduque. Cierra también su sesión.',
+    description: [
+      'Es la otra mitad de la capacidad de abrirlo. Sin ella, la única forma de',
+      'terminar un acceso sería esperar — y esperar no es algo que un operador pueda',
+      'hacer cuando se da cuenta de que se ha equivocado de tenant.',
+      '',
+      'Idempotente: revocar dos veces devuelve `revoked: false` la segunda.',
+    ].join('\n'),
+  })
+  async revokeSupportAccess(
+    @Req() req: FastifyRequest,
+    @CurrentUser() user: SessionClaims | undefined,
+    @Param('id') id: string,
+    @Param('grantId') grantId: string,
+  ) {
+    const actor = requireAdminActor(user, req);
+    return this.supportAccess.revoke(actor, id, grantId, extractClientContext(req));
   }
 
   @Post(':id/domains')

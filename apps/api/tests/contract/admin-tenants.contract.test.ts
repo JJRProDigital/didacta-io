@@ -6,8 +6,8 @@
  * CONTRATO CON `didacta-cloud` — UC-C104
  * ============================================================================
  *
- * Estas siete operaciones son las que un plano de control externo consume para
- * dar de alta, operar y facturar tenants. **Romperlas es un breaking change**:
+ * Estas diez operaciones son las que un plano de control externo consume para
+ * dar de alta, operar, facturar y sostener tenants. **Romperlas es un breaking change**:
  * no basta con que la suite siga verde aquí, hay que coordinar el cambio con
  * `didacta-cloud` (y con cualquier self-hoster que automatice su instalación)
  * antes de mergear.
@@ -36,14 +36,17 @@ import {
   domainSchema,
   setStatusSchema,
   signupsSchema,
+  supportAccessSchema,
 } from '../../src/admin/admin-tenants.controller';
+import { SupportAccessController } from '../../src/admin/support-access.controller';
 import { SIGNUPS_FROZEN_CODE } from '../../src/tenancy/signup-freeze';
+import { SUPPORT_ACCESS_CODES } from '../../src/tenancy/support-access';
 import { AdminTenantsService } from '../../src/admin/admin-tenants.service';
 
 const ACTOR = { kind: 'user' as const, userId: 'user-super-1' };
 const TENANT_ID = '99999999-8888-7777-6666-555555555555';
 
-/** Las 7 operaciones del contrato: verbo + ruta relativa al controller. */
+/** Las 10 operaciones del contrato: verbo + ruta relativa al controller. */
 const CONTRACT_ROUTES: Array<{ handler: string; method: number; path: string }> = [
   { handler: 'list', method: RequestMethod.GET, path: '/' },
   { handler: 'usage', method: RequestMethod.GET, path: 'usage' },
@@ -51,9 +54,18 @@ const CONTRACT_ROUTES: Array<{ handler: string; method: number; path: string }> 
   { handler: 'create', method: RequestMethod.POST, path: '/' },
   { handler: 'setStatus', method: RequestMethod.PATCH, path: ':id/status' },
   { handler: 'setSignups', method: RequestMethod.PATCH, path: ':id/signups' },
+  { handler: 'grantSupportAccess', method: RequestMethod.POST, path: ':id/support-access' },
+  {
+    handler: 'revokeSupportAccess',
+    method: RequestMethod.DELETE,
+    path: ':id/support-access/:grantId',
+  },
   { handler: 'addDomain', method: RequestMethod.POST, path: ':id/domains' },
   { handler: 'removeDomain', method: RequestMethod.DELETE, path: ':id/domains/:hostname' },
 ];
+
+/** Ruta del canje. No cuelga de `admin/tenants`: es pública y la abre un navegador. */
+const REDEEM_ROUTE = { handler: 'redeem', method: RequestMethod.POST, path: 'redeem' };
 
 /** Respuesta de `list`, `getOne`, `create`, `setStatus`, `addDomain` y `removeDomain`. */
 const TENANT_ITEM_FIELDS = [
@@ -201,6 +213,46 @@ describe('CONTRATO · admin/tenants ↔ didacta-cloud', () => {
       }
       expect(setStatusSchema.safeParse({ status: 'DELETED' }).success).toBe(false);
       expect(setStatusSchema.safeParse({ status: 'active' }).success).toBe(false);
+    });
+
+    it('abrir acceso de soporte exige un motivo con cuerpo; la ventana es opcional', () => {
+      // El motivo lo lee el CLIENTE en su audit log cuando quiera saber por qué
+      // entró alguien de soporte en su aula. Diez caracteres no lo garantizan,
+      // pero descartan el «test» de quien tenía prisa.
+      expect(
+        supportAccessSchema.parse({ reason: 'Incidencia #4210: no cargan las lecciones.' }),
+      ).toEqual({ reason: 'Incidencia #4210: no cargan las lecciones.' });
+      expect(supportAccessSchema.safeParse({}).success).toBe(false);
+      expect(supportAccessSchema.safeParse({ reason: 'test' }).success).toBe(false);
+      expect(
+        supportAccessSchema.safeParse({ reason: 'Incidencia #4210.', ttlSeconds: 300 }).success,
+      ).toBe(true);
+      expect(Object.keys(supportAccessSchema.shape).sort()).toEqual(['reason', 'ttlSeconds']);
+    });
+
+    it('el canje vive en auth/support-access y lleva solo el token', () => {
+      expect(Reflect.getMetadata(PATH_METADATA, SupportAccessController)).toBe(
+        'auth/support-access',
+      );
+      const fn = (SupportAccessController.prototype as unknown as Record<string, unknown>)[
+        REDEEM_ROUTE.handler
+      ];
+      expect(fn).toBeTypeOf('function');
+      expect(Reflect.getMetadata(PATH_METADATA, fn as object)).toBe(REDEEM_ROUTE.path);
+      expect(Reflect.getMetadata(METHOD_METADATA, fn as object)).toBe(REDEEM_ROUTE.method);
+    });
+
+    it('los códigos del acceso de soporte son estables', () => {
+      // Cloud distingue «caducó» de «ya se usó» para decidir si reintenta o
+      // pide una concesión nueva. Renombrarlos rompe esa decisión.
+      expect(SUPPORT_ACCESS_CODES).toEqual({
+        INVALID: 'SUPPORT_ACCESS_INVALID',
+        EXPIRED: 'SUPPORT_ACCESS_EXPIRED',
+        ALREADY_REDEEMED: 'SUPPORT_ACCESS_ALREADY_REDEEMED',
+        REVOKED: 'SUPPORT_ACCESS_REVOKED',
+        TENANT_UNAVAILABLE: 'SUPPORT_ACCESS_TENANT_UNAVAILABLE',
+        NOT_FOUND: 'SUPPORT_ACCESS_NOT_FOUND',
+      });
     });
 
     it('congelar altas lleva `frozen` y un `reason` obligatorio', () => {

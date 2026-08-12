@@ -61,5 +61,10 @@
     "title": "Set up notifications:",
     "body": "without an SMTP server your users get no email at all.",
     "cta": "Set up"
+  },
+  "supportAccessBanner": {
+    "title": "Support access active.",
+    "body": "Someone from support is inside this space. Reason: {reason}",
+    "expired": "expired"
   }
 }

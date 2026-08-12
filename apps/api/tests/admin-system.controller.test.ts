@@ -18,6 +18,15 @@ function makeController(opts: {
   oldestAgeSeconds?: number;
   outboxThrows?: boolean;
   dispatchers?: number;
+  /** `null` = sin Redis, la cola no se inicializa (dev local, y no es avería). */
+  modJobsCounts?: {
+    waiting?: number;
+    active?: number;
+    delayed?: number;
+    failed?: number;
+  } | null;
+  modJobsWorkers?: number;
+  modJobsThrows?: boolean;
 }): AdminSystemController {
   const smtpRows: SmtpRow[] = [];
   for (let i = 0; i < (opts.smtpConfigured ?? 0); i++) {
@@ -61,11 +70,33 @@ function makeController(opts: {
     }),
   };
 
+  const counts = opts.modJobsCounts;
+  const modJobs = {
+    getQueue: () =>
+      counts === null
+        ? undefined
+        : {
+            async getJobCounts() {
+              if (opts.modJobsThrows) throw new Error('redis down');
+              return {
+                waiting: counts?.waiting ?? 0,
+                active: counts?.active ?? 0,
+                delayed: counts?.delayed ?? 0,
+                failed: counts?.failed ?? 0,
+              };
+            },
+            async getWorkers() {
+              return Array.from({ length: opts.modJobsWorkers ?? 1 }, (_, i) => ({ id: `w${i}` }));
+            },
+          },
+  };
+
   return new AdminSystemController(
     prisma as never,
     outboxQueue as never,
     outboxRecovery as never,
     modules as never,
+    modJobs as never,
   );
 }
 
@@ -172,5 +203,92 @@ describe('AdminSystemController.healthDetail', () => {
     const c = makeController({ redisStatus: 'disabled', storageKind: 'local', dispatchers: 0 });
     const r = await c.healthDetail(ADMIN as never);
     expect(r.checks.outbox.dispatchers).toBe(0);
+  });
+});
+
+/**
+ * UC-C504 — lo que le faltaba al plano de control para operar el pool sin
+ * entrar a mirar Redis a mano.
+ */
+describe('AdminSystemController.healthDetail · cola de módulos y versión', () => {
+  it('informa de los cuatro contadores y de cuántos workers la atienden', async () => {
+    const c = makeController({
+      redisStatus: 'ok',
+      storageKind: 'local',
+      modJobsCounts: { waiting: 3, active: 1, delayed: 2, failed: 7 },
+      modJobsWorkers: 2,
+    });
+    const r = await c.healthDetail(ADMIN as never);
+    expect(r.checks.modJobs).toMatchObject({
+      status: 'ok',
+      waiting: 3,
+      active: 1,
+      delayed: 2,
+      failed: 7,
+      workers: 2,
+    });
+    expect(r.status).toBe('healthy');
+  });
+
+  it('acumular trabajo degrada, no tumba: el aula sigue sirviendo', async () => {
+    const c = makeController({
+      redisStatus: 'ok',
+      storageKind: 'local',
+      modJobsCounts: { waiting: 500 },
+    });
+    const r = await c.healthDetail(ADMIN as never);
+    expect(r.checks.modJobs.status).toBe('backlog');
+    expect(r.status).toBe('degraded');
+  });
+
+  it('sin Redis la cola sale `disabled` y NO cuenta como avería', async () => {
+    // Es el estado normal de una instalación de desarrollo y de cualquiera que
+    // no use módulos con trabajos en segundo plano. Marcarlo como error haría
+    // que el panel del pool pintara en rojo instalaciones perfectamente sanas.
+    const c = makeController({
+      redisStatus: 'disabled',
+      storageKind: 'local',
+      modJobsCounts: null,
+    });
+    const r = await c.healthDetail(ADMIN as never);
+    expect(r.checks.modJobs.status).toBe('disabled');
+    expect(r.checks.modJobs.workers).toBe(0);
+    expect(r.status).toBe('healthy');
+  });
+
+  it('si Redis contesta mal al contar, el estado global es unhealthy', async () => {
+    const c = makeController({ redisStatus: 'ok', storageKind: 'local', modJobsThrows: true });
+    const r = await c.healthDetail(ADMIN as never);
+    expect(r.checks.modJobs.status).toBe('error');
+    expect(r.status).toBe('unhealthy');
+  });
+
+  it('devuelve la versión que corre AHORA en el proceso', async () => {
+    // El orquestador sabe qué etiqueta pidió; esto dice qué está corriendo. Es
+    // la diferencia entre creer que desplegaste y saberlo, y es lo que mide el
+    // lag Community → Cloud.
+    const previo = process.env['DIDACTA_CORE_VERSION'];
+    process.env['DIDACTA_CORE_VERSION'] = '0.0.1-alpha.105';
+    try {
+      const c = makeController({ redisStatus: 'ok', storageKind: 'local' });
+      const r = await c.healthDetail(ADMIN as never);
+      expect(r.version).toBe('0.0.1-alpha.105');
+    } finally {
+      if (previo === undefined) delete process.env['DIDACTA_CORE_VERSION'];
+      else process.env['DIDACTA_CORE_VERSION'] = previo;
+    }
+  });
+
+  it('la credencial de provisioning entra sin usuario; una persona sigue necesitando rol', async () => {
+    const c = makeController({ redisStatus: 'ok', storageKind: 'local' });
+    const req = { provisioningActor: { credentialId: 'cred-1' } };
+    const r = await c.healthDetail(undefined, req as never);
+    expect(r.status).toBe('healthy');
+
+    // Sin credencial y sin rol, sigue siendo 403 — abrir la ruta a la máquina
+    // no la abrió a cualquiera con sesión.
+    await expect(c.healthDetail(ALUMNO as never, {} as never)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 });

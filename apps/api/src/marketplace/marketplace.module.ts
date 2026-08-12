@@ -83,8 +83,11 @@ import { ScopedSecretsApiFactory } from './sandboxed-secrets.service';
     RateLimiterService,
     MarketplaceErrorFilter,
     // Sprint 3 — runtime de jobs `mod-jobs` (BullMQ + worker + registry).
+    // La cola en sí la provee ModulesModule (ya importado arriba): vive junto
+    // al outbox, la otra cola del host, para que `admin/system/health-detail`
+    // pueda informar de las dos sin un ciclo de módulos. Aquí se queda el
+    // worker, que es lo específico del marketplace.
     ModuleJobLifecycleRegistry,
-    ModJobsQueueService,
     ModJobsWorkerService,
     ...modJobsMetricsProviders,
     ModJobsMetrics,
@@ -95,7 +98,6 @@ import { ScopedSecretsApiFactory } from './sandboxed-secrets.service';
     InstalledModuleService,
     ModuleRouterService,
     ModuleJobLifecycleRegistry,
-    ModJobsQueueService,
   ],
 })
 export class MarketplaceModule {}

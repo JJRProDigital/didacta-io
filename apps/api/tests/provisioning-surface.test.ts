@@ -17,16 +17,26 @@ import { join, relative, sep } from 'node:path';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { describe, expect, it } from 'vitest';
 import { AdminTenantsController } from '../src/admin/admin-tenants.controller';
+import { AdminSystemController } from '../src/modules/admin-system.controller';
 import { ALLOW_PROVISIONING_KEY } from '../src/auth/jwt-or-provisioning.guard';
 
 /**
- * Las 8 operaciones que el plano de control necesita para dar de alta, operar
- * y facturar un tenant. Ni una más.
+ * Las 10 operaciones que el plano de control necesita para dar de alta, operar,
+ * facturar y sostener un tenant. Ni una más.
  *
  * `setSignups` (U7) se añadió el 2026-08-12 a conciencia: congelar altas es el
  * enforcement del techo de plan, y esa decisión la toma el plano de control
  * desde fuera. El núcleo solo obedece un interruptor — no cuenta miembros ni
  * mira licencias, y `signup-freeze.test.ts` lo vigila.
+ *
+ * `grantSupportAccess` y `revokeSupportAccess` (U8) se añadieron el mismo día,
+ * y son las dos que más merecen que alguien las mire dos veces: abren la puerta
+ * del aula de un cliente. Lo que las hace aceptables no es el guard, es lo que
+ * la operación puede y no puede hacer —≤ 15 min, un solo uso, motivo
+ * obligatorio, usuario de soporte propio en vez de suplantar a nadie, dos filas
+ * en el audit log DEL TENANT y un aviso permanente en el aula— y todo eso lo
+ * fija `support-access.test.ts`. Van juntas a propósito: abrir sin poder cerrar
+ * dejaría al operador esperando a que caduque cuando se equivoque de tenant.
  */
 const WHITELIST = [
   'list',
@@ -35,6 +45,8 @@ const WHITELIST = [
   'create',
   'setStatus',
   'setSignups',
+  'grantSupportAccess',
+  'revokeSupportAccess',
   'addDomain',
   'removeDomain',
 ];
@@ -45,6 +57,18 @@ const WHITELIST = [
  *  - `rename`: decisión de negocio del humano que opera la academia.
  */
 const DENIED = ['capacity', 'rename'];
+
+/**
+ * El SEGUNDO controller que abre la credencial, y hasta el 2026-08-12 el único
+ * con `JwtAuthGuard` a secas. Solo una ruta, y de solo lectura.
+ *
+ * Se abrió para desbloquear UC-C504: el plano de control no puede operar un
+ * pool a ciegas, y «¿este nodo va bien?» no se responde entrando a mano. Lo que
+ * devuelve son latencias, contadores de las dos colas y la versión desplegada
+ * — ni un dato de un alumno, ni una escritura. Si algún día aparece aquí una
+ * ruta que escriba, este test es el sitio donde hay que pararse a discutirlo.
+ */
+const SYSTEM_WHITELIST = ['healthDetail'];
 
 const SRC_ROOT = join(process.cwd(), 'src');
 
@@ -85,7 +109,7 @@ function isAllowed(controller: new (...args: never[]) => unknown, handler: strin
 }
 
 describe('UC-C103 AC2 · superficie de la credencial de provisioning', () => {
-  it('abre exactamente las 8 rutas de la lista blanca en AdminTenantsController', () => {
+  it('abre exactamente las 10 rutas de la lista blanca en AdminTenantsController', () => {
     const abiertas = routeHandlersOf(AdminTenantsController).filter((h) =>
       isAllowed(AdminTenantsController, h),
     );
@@ -103,16 +127,35 @@ describe('UC-C103 AC2 · superficie de la credencial de provisioning', () => {
     }
   });
 
-  it('no hay ningún @AllowProvisioning() fuera de AdminTenantsController', () => {
+  it('abre exactamente una ruta, y de solo lectura, en AdminSystemController', () => {
+    const abiertas = routeHandlersOf(AdminSystemController).filter((h) =>
+      isAllowed(AdminSystemController, h),
+    );
+    expect(abiertas.sort()).toEqual([...SYSTEM_WHITELIST].sort());
+    // Y esa ruta es un GET. Una escritura alcanzable con la credencial en el
+    // controller de salud del sistema sería otra conversación entera.
+    for (const handler of abiertas) {
+      const fn = (AdminSystemController.prototype as unknown as Record<string, unknown>)[handler];
+      expect(Reflect.getMetadata(METHOD_METADATA, fn as object)).toBe(0); // RequestMethod.GET
+    }
+  });
+
+  it('los dos ÚNICOS ficheros con @AllowProvisioning() son los declarados aquí', () => {
     // Línea entera, no `includes`: si no, los doc-comments que lo citan en
     // prosa (el guard, el service) darían falsos positivos.
     const conMarca = filesMatching(/^\s*@AllowProvisioning\(\)\s*$/m);
-    expect(conMarca).toEqual(['admin/admin-tenants.controller.ts']);
+    expect(conMarca).toEqual([
+      'admin/admin-tenants.controller.ts',
+      'modules/admin-system.controller.ts',
+    ]);
   });
 
-  it('el guard que acepta la credencial solo protege AdminTenantsController', () => {
+  it('el guard que acepta la credencial solo protege esos dos controllers', () => {
     const conGuard = filesMatching(/^\s*@UseGuards\(JwtOrProvisioningGuard\)\s*$/m);
-    expect(conGuard).toEqual(['admin/admin-tenants.controller.ts']);
+    expect(conGuard).toEqual([
+      'admin/admin-tenants.controller.ts',
+      'modules/admin-system.controller.ts',
+    ]);
   });
 
   it('emitir y revocar la credencial NO es alcanzable con la propia credencial', () => {

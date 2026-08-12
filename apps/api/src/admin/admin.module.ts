@@ -34,6 +34,8 @@ import { SamlAdminController } from './sso/saml-admin.controller';
 import { WpSsoAdminController } from './sso/wp-sso-admin.controller';
 import { SuperUsersController } from './super/super-users.controller';
 import { SuperUsersService } from './super/super-users.service';
+import { SupportAccessController } from './support-access.controller';
+import { SupportAccessService } from './support-access.service';
 
 /**
  * Módulo administrativo: agrupa controllers y services destinados al panel
@@ -91,6 +93,10 @@ import { SuperUsersService } from './super/super-users.service';
     // plano de control externo (Didacta Cloud, o el script de cualquier
     // self-hoster) sobre la lista blanca de rutas de tenants.
     AdminProvisioningController,
+    // U8 — canje del acceso de soporte. Es la ÚNICA ruta pública de este
+    // módulo: quien canjea todavía no tiene sesión, precisamente está pidiendo
+    // una. Lo que la protege es el token de un solo uso que trae en el cuerpo.
+    SupportAccessController,
   ],
   providers: [
     InvitationsService,
@@ -101,7 +107,17 @@ import { SuperUsersService } from './super/super-users.service';
     AdminImagesService,
     CustomDomainsService,
     SuperUsersService,
+    // U8 — emisión, revocación y canje del acceso de soporte de vida corta.
+    SupportAccessService,
   ],
-  exports: [AdminUsersService, AdminTenantsService, AdminStatsService, SuperUsersService],
+  exports: [
+    AdminUsersService,
+    AdminTenantsService,
+    AdminStatsService,
+    SuperUsersService,
+    // Lo consume MeController para pintar el banner del aula mientras dura un
+    // acceso de soporte.
+    SupportAccessService,
+  ],
 })
 export class AdminModule {}

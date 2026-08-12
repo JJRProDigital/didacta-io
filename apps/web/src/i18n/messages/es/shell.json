@@ -61,5 +61,10 @@
     "title": "Configura las notificaciones:",
     "body": "sin servidor SMTP tus usuarios no reciben ningún correo.",
     "cta": "Configurar"
+  },
+  "supportAccessBanner": {
+    "title": "Acceso de soporte activo.",
+    "body": "Alguien de soporte está dentro de este espacio. Motivo: {reason}",
+    "expired": "caducado"
   }
 }

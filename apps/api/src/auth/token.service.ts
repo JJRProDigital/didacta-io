@@ -24,6 +24,16 @@ export interface SessionClaims {
    * valida el estado del usuario, pero no la sesión concreta.
    */
   sid?: string;
+  /**
+   * Id de la concesión de acceso de soporte (U8) que abrió esta sesión.
+   *
+   * Presente SOLO en las sesiones nacidas de un canje. Viaja dentro del token
+   * —y no en una tabla que haya que consultar— porque es lo que hace que el
+   * aula pinte el banner: si dependiera de una query, un fallo de red lo
+   * apagaría, y un acceso de soporte sin banner es una llave maestra
+   * escondida.
+   */
+  sup?: string;
 }
 
 export interface SignedTokens {
@@ -90,6 +100,43 @@ export class TokenService {
     };
   }
 
+  /**
+   * Firma el access token de un acceso de soporte (U8).
+   *
+   * Tres diferencias con `sign()`, y las tres son el punto:
+   *
+   *  - **No hay refresh token.** Una sesión de soporte no se renueva: cuando se
+   *    acaba la ventana, se acabó. Si pudiera renovarse, «15 minutos» sería una
+   *    promesa vacía a partir del minuto 16.
+   *  - **El TTL lo fija el llamante**, ya recortado al techo por
+   *    `clampTtlSeconds()`, en vez del TTL global de acceso (1 h).
+   *  - **Lleva `sup`**, el id de la concesión, para que el aula sepa que tiene
+   *    que enseñar el banner y para que quede en el token quién autorizó esto.
+   */
+  async signSupportAccess(
+    claims: SessionClaims & { sup: string },
+    ttlSeconds: number,
+  ): Promise<{ accessToken: string; expiresIn: number }> {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const accessToken = await new SignJWT({
+      tenantId: claims.tenantId,
+      roles: claims.roles,
+      mfaVerified: claims.mfaVerified,
+      kind: 'access',
+      sup: claims.sup,
+      ...(claims.sid ? { sid: claims.sid } : {}),
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject(claims.sub)
+      .setIssuer(this.config.jwtIssuer)
+      .setAudience('didacta-api')
+      .setIssuedAt(issuedAt)
+      .setExpirationTime(issuedAt + ttlSeconds)
+      .sign(this.secret);
+
+    return { accessToken, expiresIn: ttlSeconds };
+  }
+
   async verifyAccess(token: string): Promise<SessionClaims> {
     const { payload } = await jwtVerify(token, this.secret, {
       issuer: this.config.jwtIssuer,
@@ -99,12 +146,14 @@ export class TokenService {
       throw new Error('Token no es de tipo access');
     }
     const sid = payload['sid'];
+    const sup = payload['sup'];
     return {
       sub: String(payload.sub),
       tenantId: String(payload['tenantId']),
       roles: (payload['roles'] as string[] | undefined) ?? [],
       mfaVerified: Boolean(payload['mfaVerified']),
       ...(typeof sid === 'string' ? { sid } : {}),
+      ...(typeof sup === 'string' ? { sup } : {}),
     };
   }
 
