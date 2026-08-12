@@ -8,8 +8,8 @@
  * integración real entre ambos servicios, no solo SetupTokenService aislado.
  */
 
-import { describe, expect, it, vi } from 'vitest';
-import { ForbiddenException } from '@nestjs/common';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaInstanceConfigService } from '../src/modules/prisma-instance-config.service';
 import { SecretCipherService } from '../src/modules/secret-cipher.service';
 import { SetupTokenService } from '../src/setup/setup-token.service';
@@ -96,6 +96,21 @@ function makeService() {
   return { state, service };
 }
 
+// `DIDACTA_SETUP_TOKEN` es la vía de los despliegues de un clic. Si estuviera
+// exportada en la máquina de quien corre los tests, contaminaría a TODOS los
+// casos de este fichero (el token dejaría de ser aleatorio), así que se limpia
+// antes de cada uno y se restaura al final.
+const ORIGINAL_ENV_TOKEN = process.env['DIDACTA_SETUP_TOKEN'];
+
+beforeEach(() => {
+  delete process.env['DIDACTA_SETUP_TOKEN'];
+});
+
+afterAll(() => {
+  if (ORIGINAL_ENV_TOKEN === undefined) delete process.env['DIDACTA_SETUP_TOKEN'];
+  else process.env['DIDACTA_SETUP_TOKEN'] = ORIGINAL_ENV_TOKEN;
+});
+
 describe('SetupTokenService.issue', () => {
   it('genera un token distinto en cada llamada y persiste solo su hash SHA-256', async () => {
     const { state, service } = makeService();
@@ -112,6 +127,49 @@ describe('SetupTokenService.issue', () => {
     expect(row?.valueJson).not.toBe(a);
     expect(row?.valueJson).not.toBe(b);
     expect(row?.valueJson).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe('SetupTokenService.issue con DIDACTA_SETUP_TOKEN', () => {
+  it('usa el token del entorno tal cual y lo acepta en assertValid', async () => {
+    process.env['DIDACTA_SETUP_TOKEN'] = 'token-de-la-plantilla-de-coolify';
+    const { service } = makeService();
+
+    const plain = await service.issue();
+
+    expect(plain).toBe('token-de-la-plantilla-de-coolify');
+    await expect(service.assertValid('token-de-la-plantilla-de-coolify')).resolves.toBeUndefined();
+  });
+
+  it('es estable entre reinicios: reemitir con la misma env devuelve el mismo token', async () => {
+    process.env['DIDACTA_SETUP_TOKEN'] = 'token-de-la-plantilla-de-coolify';
+    const { service } = makeService();
+
+    // Un reinicio del contenedor antes de completar el wizard vuelve a emitir.
+    // Con la env fijada, el enlace que la plantilla enseñó sigue valiendo.
+    expect(await service.issue()).toBe(await service.issue());
+  });
+
+  it('ignora un token demasiado corto y cae al aleatorio', async () => {
+    process.env['DIDACTA_SETUP_TOKEN'] = 'corto';
+    const { service } = makeService();
+
+    const plain = await service.issue();
+
+    expect(plain).not.toBe('corto');
+    await expect(service.assertValid('corto')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.assertValid(plain)).resolves.toBeUndefined();
+  });
+
+  it('ignora un token con caracteres que rompen la URL y cae al aleatorio', async () => {
+    // Suficientemente largo, pero el `&` partiría `/setup?token=…` en dos.
+    process.env['DIDACTA_SETUP_TOKEN'] = 'esto&rompe=la-url-entera';
+    const { service } = makeService();
+
+    const plain = await service.issue();
+
+    expect(plain).not.toBe('esto&rompe=la-url-entera');
+    await expect(service.assertValid(plain)).resolves.toBeUndefined();
   });
 });
 
@@ -134,6 +192,46 @@ describe('SetupTokenService.onApplicationBootstrap', () => {
     state.tenants.push({ id: 't1', deletedAt: new Date() });
     await service.onApplicationBootstrap();
     expect(state.instanceSettings).toHaveLength(1);
+  });
+
+  it('imprime el token aleatorio en los logs (es lo único que el operador puede leer)', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { service } = makeService();
+      const plain = await service.issue();
+      warn.mockClear();
+
+      // Reemitir dentro de bootstrap genera otro token; comprobamos el formato,
+      // no el valor: lo que importa es que algo imprimible sale por el log.
+      await service.onApplicationBootstrap();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toMatch(/\/setup\?token=[A-Za-z0-9_-]+/);
+      expect(plain).toBeTruthy();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('con DIDACTA_SETUP_TOKEN persiste ese token y NO lo escupe por los logs', async () => {
+    process.env['DIDACTA_SETUP_TOKEN'] = 'token-de-la-plantilla-de-coolify';
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const { state, service } = makeService();
+
+      await service.onApplicationBootstrap();
+
+      expect(state.instanceSettings).toHaveLength(1);
+      await expect(
+        service.assertValid('token-de-la-plantilla-de-coolify'),
+      ).resolves.toBeUndefined();
+      // El secreto ya vive en el panel del operador: no se duplica en el log.
+      const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).not.toContain('token-de-la-plantilla-de-coolify');
+      expect(logged).toContain('DIDACTA_SETUP_TOKEN');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
