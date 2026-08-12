@@ -12,6 +12,7 @@ import {
 import { PrismaAuditLogService } from '../modules/prisma-audit-log.service';
 import { PrismaTenantConfigService } from '../modules/prisma-tenant-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { assertSignupsAllowed } from '../tenancy/signup-freeze';
 import { runAsTenant, runSanctionedGlobalAccess } from '../tenancy/tenant-context.storage';
 import type { ClientContext } from './client-context';
 import { isAdminMfaEnforced } from './mfa-config';
@@ -148,6 +149,14 @@ export class AuthService {
             code: 'AUTH_SIGNUP_DISABLED',
           });
         }
+        // U7 — la quinta puerta. El registro abierto del núcleo es opcional
+        // (`AUTH_SIGNUP_ENABLED`, o el ajuste por tenant) y estaba fuera de la
+        // congelación: con él encendido, un tenant con las altas cerradas
+        // seguía admitiendo miembros por aquí, y esos SÍ cuentan para la
+        // factura. Va después del gate de «registro habilitado» a propósito:
+        // si el registro está apagado, el motivo correcto es ése, no que estén
+        // congeladas.
+        await assertSignupsAllowed(this.prisma, tenant.id);
         return this.signupInTenant(tenant, dto, ctx);
       },
       { traceLabel: 'auth-signup' },

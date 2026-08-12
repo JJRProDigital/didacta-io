@@ -14,13 +14,30 @@
  * «lo que NO puede pasar» existen para que ese PR se ponga rojo.
  */
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { ConflictException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { SIGNUPS_FROZEN_CODE, assertSignupsAllowed, isFrozen } from '../src/tenancy/signup-freeze';
 
-const FUENTE = join(process.cwd(), 'src', 'tenancy', 'signup-freeze.ts');
+const SRC_ROOT = join(process.cwd(), 'src');
+const FUENTE = join(SRC_ROOT, 'tenancy', 'signup-freeze.ts');
+
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = join(dir, entry);
+    return statSync(full).isDirectory() ? walk(full) : [full];
+  });
+}
+
+const TS_FILES = walk(SRC_ROOT).filter((f) => f.endsWith('.ts'));
+
+/** Ficheros de `src/` cuyo contenido casa con el patrón, en ruta POSIX. */
+function filesMatching(pattern: RegExp): string[] {
+  return TS_FILES.filter((file) => pattern.test(readFileSync(file, 'utf8')))
+    .map((file) => relative(SRC_ROOT, file).split(sep).join('/'))
+    .sort();
+}
 
 function prismaCon(state: { signupsFrozenAt: Date | null; signupsFrozenReason?: string | null }) {
   return {
@@ -117,6 +134,32 @@ describe('U7 · lo que NO puede pasar — Community no se capa', () => {
   it('solo consulta la tabla `tenant`', () => {
     const modelos = [...fuente.matchAll(/prisma\.(\w+)\./g)].map((m) => m[1]);
     expect(new Set(modelos)).toEqual(new Set(['tenant']));
+  });
+
+  it('TODAS las puertas de entrada la comprueban, y son cinco', () => {
+    // El arnés local de `didacta-cloud` encontró la quinta el 12-ago: el
+    // registro abierto del propio núcleo (`AuthService.signup`) se había
+    // quedado fuera. Es opcional —`AUTH_SIGNUP_ENABLED`, o el ajuste por
+    // tenant— pero con él encendido un tenant congelado seguía admitiendo
+    // miembros por ahí, y esos SÍ cuentan para la factura.
+    //
+    // La lista se escribe a mano a propósito: añadir una puerta nueva sin
+    // pasar por aquí pone esto rojo, que es la única forma de que la promesa
+    // de «todas las puertas» siga siendo cierta dentro de un año.
+    const PUERTAS = [
+      // Invitación individual, y con ella el alta masiva por CSV.
+      'admin/admin-users.service.ts',
+      // Checkout de alumno (mod.billing).
+      'modules/billing/billing-public.controller.ts',
+      // Registro público del módulo de captación (mod.member-registration).
+      'modules/member-registration/member-registration-public.controller.ts',
+      // Registro abierto del núcleo.
+      'auth/auth.service.ts',
+    ];
+    const llamantes = filesMatching(/await assertSignupsAllowed\(/).filter(
+      (f) => f !== 'tenancy/signup-freeze.ts',
+    );
+    expect(llamantes.sort()).toEqual([...PUERTAS].sort());
   });
 
   it('la migración no toca ninguna fila existente', () => {
