@@ -16,6 +16,7 @@ import { AccessGroupsService } from '../modules/access-groups/access-groups.serv
 import { PrismaAuditLogService } from '../modules/prisma-audit-log.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AccountStateService } from '../auth/account-state.service';
+import { assertSignupsAllowed } from '../tenancy/signup-freeze';
 
 /** Validez del enlace de invitación: 7 días. Ver `resendInvite`. */
 const INVITE_TTL_MINUTES = 7 * 24 * 60;
@@ -238,6 +239,9 @@ export class AdminUsersService {
     options: { sendInvite?: boolean } = {},
   ): Promise<UserListItem> {
     const sendInvite = options.sendInvite ?? true;
+    // U7: puerta 1 y 2 de 4. El alta masiva por CSV pasa por aqui, asi que
+    // congelar cubre las dos con una sola comprobacion.
+    await assertSignupsAllowed(this.prisma, tenantId);
     if (!TENANT_ASSIGNABLE_ROLES.includes(dto.role)) {
       throw new BadRequestException({
         message: `Rol "${dto.role}" no asignable.`,

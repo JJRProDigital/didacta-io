@@ -21,6 +21,7 @@ import { extractClientContext } from '../../auth/client-context';
 import { readRequestLocale } from '../../common/checkout-locale';
 import { ZodValidationPipe } from '../../auth/zod-validation.pipe';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertSignupsAllowed } from '../../tenancy/signup-freeze';
 import { runAsTenant } from '../../tenancy/tenant-context.storage';
 import { TenantResolverService } from '../../tenancy/tenant-resolver.service';
 import { ModuleRegistryService } from '../module-registry.service';
@@ -176,6 +177,9 @@ export class BillingPublicController {
     const tenantId = await this.resolveTenantId(req);
     ensureUuid(courseId);
     return runAsTenant(tenantId, async () => {
+      // U7: puerta 4 de 4. Antes que ninguna otra guarda: cobrarle a alguien
+      // que despues no va a poder entrar es el peor orden posible.
+      await assertSignupsAllowed(this.prisma, tenantId);
       // Guardas ANTES de mandar a nadie a pagar (mismo criterio que el checkout
       // logueado): sin esto se puede cobrar por un curso despublicado cuya
       // matriculación posterior fallaría siempre.

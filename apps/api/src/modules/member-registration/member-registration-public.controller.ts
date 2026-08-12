@@ -43,6 +43,8 @@ import { MemberDecisionService } from './member-decision.service';
 import { MemberRegistrationSettingsService } from './member-registration-settings.service';
 import { MemberRegistrationService } from './member-registration.service';
 import { TelegramService } from './telegram.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import { assertSignupsAllowed } from '../../tenancy/signup-freeze';
 
 // ============================================================================
 // Controller PÚBLICO del flujo de inscripción de miembros con VERIFICADORES
@@ -67,6 +69,7 @@ export class MemberRegistrationPublicController {
     private readonly decision: MemberDecisionService,
     private readonly settings: MemberRegistrationSettingsService,
     private readonly tenantResolver: TenantResolverService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -134,6 +137,9 @@ export class MemberRegistrationPublicController {
     const secret = this.requireAuthSecret();
     const tenantId = await this.resolveTenantId(req);
     return runAsTenant(tenantId, async () => {
+      // U7: puerta 3 de 4. Antes de la politica, para no pedirle a nadie que
+      // verifique su correo si despues no vamos a dejarle entrar.
+      await assertSignupsAllowed(this.prisma, tenantId);
       const policy = await this.requirePolicy(tenantId);
       if (!policy.verifiers.includes('telegram')) {
         throw new ServiceUnavailableException({

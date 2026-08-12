@@ -509,6 +509,52 @@ export class AdminTenantsService {
     return this.getDetail(id);
   }
 
+  /**
+   * Congela o descongela las altas nuevas del tenant (U7).
+   *
+   * Es un interruptor y nada mas: aqui no se cuenta a nadie ni se mira ninguna
+   * licencia. La politica que decide congelar vive fuera —en la persona que
+   * pulsa, o en el plano de control del SaaS—, nunca en el nucleo. Ver
+   * `tenancy/signup-freeze.ts`.
+   */
+  async setSignupsFrozen(
+    actor: AdminActor,
+    id: string,
+    frozen: boolean,
+    reason: string,
+    ctx: ClientContext = NO_CTX,
+  ): Promise<TenantListItem> {
+    return runGlobalWithoutTenant(async () => {
+      const t = await this.prisma.tenant.findFirst({ where: { id, deletedAt: null } });
+      if (!t)
+        throw new NotFoundException({
+          message: 'Tenant no encontrado.',
+          code: 'ADMIN_TENANT_NOT_FOUND',
+        });
+
+      await this.prisma.tenant.update({
+        where: { id },
+        data: {
+          signupsFrozenAt: frozen ? new Date() : null,
+          signupsFrozenReason: frozen ? reason : null,
+        },
+      });
+
+      await this.auditLog.record({
+        tenantId: id,
+        actorId: auditActorId(actor),
+        action: frozen ? 'admin.tenant.signups_frozen' : 'admin.tenant.signups_unfrozen',
+        resourceType: 'tenant',
+        resourceId: id,
+        metadata: { reason, ...auditActorTrace(actor) },
+        ip: ctx.ip ?? undefined,
+        userAgent: ctx.userAgent ?? undefined,
+      });
+
+      return this.getDetail(id);
+    });
+  }
+
   async addDomain(
     actor: AdminActor,
     tenantId: string,

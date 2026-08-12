@@ -81,6 +81,9 @@ function makeController(effectivePolicy: EffectiveRegistrationPolicy) {
     decision as never,
     settings as never,
     tenantResolver as never,
+    // U7: el tenant de este harness admite altas, que es el estado por defecto
+    // de cualquier instalacion y el unico que ve un self-hoster.
+    { tenant: { findUnique: vi.fn().mockResolvedValue({ signupsFrozenAt: null }) } } as never,
   );
   return { controller, telegram, emailVerification, registration, settings, tenantResolver };
 }

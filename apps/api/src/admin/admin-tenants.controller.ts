@@ -58,6 +58,13 @@ export const domainSchema = z.object({
 });
 type DomainDto = z.infer<typeof domainSchema>;
 
+export const signupsSchema = z.object({
+  frozen: z.boolean(),
+  /** Se le ensena al visitante que se queda fuera, asi que se pide siempre. */
+  reason: z.string().min(5).max(280),
+});
+type SignupsDto = z.infer<typeof signupsSchema>;
+
 function requireSuperAdmin(user: SessionClaims | undefined): SessionClaims {
   if (!user) throw new UnauthorizedException();
   if (!user.roles.includes('super_admin')) {
@@ -223,6 +230,38 @@ export class AdminTenantsController {
       { kind: 'user', userId: u.sub },
       id,
       dto.name,
+      extractClientContext(req),
+    );
+  }
+
+  @Patch(':id/signups')
+  @AllowProvisioning()
+  @ApiOperation({
+    summary: 'Congelar o descongelar las altas nuevas del tenant.',
+    description: [
+      'Con las altas congeladas, las cuatro puertas de entrada de un miembro nuevo',
+      '—invitación individual, alta masiva por CSV, registro público y checkout de',
+      'alumno— devuelven **409 `TENANT_SIGNUPS_FROZEN`** con el motivo. Los miembros',
+      'que ya están dentro no se ven afectados en nada.',
+      '',
+      '**Es un interruptor explícito, no un tope.** El núcleo no cuenta miembros, no',
+      'mira la licencia y no lo enciende solo: una instalación se queda admitiendo',
+      'altas para siempre mientras nadie lo cambie a mano. Un self-hoster lo tiene',
+      'para cerrar el grifo cuando su cohorte está llena.',
+    ].join('\n'),
+  })
+  async setSignups(
+    @Req() req: FastifyRequest,
+    @CurrentUser() user: SessionClaims | undefined,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(signupsSchema)) dto: SignupsDto,
+  ) {
+    const actor = requireAdminActor(user, req);
+    return this.service.setSignupsFrozen(
+      actor,
+      id,
+      dto.frozen,
+      dto.reason,
       extractClientContext(req),
     );
   }

@@ -38,6 +38,18 @@ model Tenant {
   updatedAt DateTime     @updatedAt @map("updated_at")
   deletedAt DateTime?    @map("deleted_at")
 
+  /// Congelacion de altas nuevas. `null` = el tenant admite altas, que es el
+  /// estado de CUALQUIER instalacion recien montada y el de todas las
+  /// self-hosted mientras nadie lo cambie a mano.
+  ///
+  /// Es un interruptor explicito y nada mas: el nucleo NO lo enciende solo, ni
+  /// mira licencias, ni cuenta miembros, ni sabe que existe un plan. Quien
+  /// decide congelar es una persona con rol super_admin, o el plano de control
+  /// del SaaS gestionado a traves de la API publica. Un self-hoster lo tiene
+  /// para cerrar el grifo cuando su cohorte esta llena, y para nada mas.
+  signupsFrozenAt     DateTime? @map("signups_frozen_at")
+  signupsFrozenReason String?   @map("signups_frozen_reason")
+
   users              User[]
   sessions           Session[]
   apiKeys            ApiKey[]
@@ -266,16 +278,16 @@ enum UserStatus {
 /// Append-only en la práctica: levantar una sanción NO borra la fila, sella
 /// `liftedAt`. El histórico completo es lo que hace útil el expediente.
 model UserRestriction {
-  id       String @id @default(uuid()) @db.Uuid
-  tenantId String @map("tenant_id") @db.Uuid
-  userId   String @map("user_id") @db.Uuid
+  id          String    @id @default(uuid()) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
   /// Áreas sancionadas: 'community' | 'messaging' | 'uploads' | 'ai', o el
   /// comodín 'all'. Se guarda 'all' literal (y no la lista expandida) para que
   /// un baneo total cubra también las áreas que se añadan en el futuro.
-  scopes   String[]
+  scopes      String[]
   /// Motivo obligatorio. Se le muestra al sancionado cuando intenta publicar:
   /// un 403 mudo genera un ticket de soporte, uno con motivo no.
-  reason   String @db.VarChar(500)
+  reason      String    @db.VarChar(500)
   /// Null = permanente. La expiración es perezosa: no hay cron que limpie,
   /// la consulta filtra por fecha. Una sanción caducada deja de aplicar sola.
   expiresAt   DateTime? @map("expires_at")

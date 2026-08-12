@@ -35,7 +35,9 @@ import {
   createTenantSchema,
   domainSchema,
   setStatusSchema,
+  signupsSchema,
 } from '../../src/admin/admin-tenants.controller';
+import { SIGNUPS_FROZEN_CODE } from '../../src/tenancy/signup-freeze';
 import { AdminTenantsService } from '../../src/admin/admin-tenants.service';
 
 const ACTOR = { kind: 'user' as const, userId: 'user-super-1' };
@@ -48,6 +50,7 @@ const CONTRACT_ROUTES: Array<{ handler: string; method: number; path: string }> 
   { handler: 'getOne', method: RequestMethod.GET, path: ':id' },
   { handler: 'create', method: RequestMethod.POST, path: '/' },
   { handler: 'setStatus', method: RequestMethod.PATCH, path: ':id/status' },
+  { handler: 'setSignups', method: RequestMethod.PATCH, path: ':id/signups' },
   { handler: 'addDomain', method: RequestMethod.POST, path: ':id/domains' },
   { handler: 'removeDomain', method: RequestMethod.DELETE, path: ':id/domains/:hostname' },
 ];
@@ -198,6 +201,24 @@ describe('CONTRATO · admin/tenants ↔ didacta-cloud', () => {
       }
       expect(setStatusSchema.safeParse({ status: 'DELETED' }).success).toBe(false);
       expect(setStatusSchema.safeParse({ status: 'active' }).success).toBe(false);
+    });
+
+    it('congelar altas lleva `frozen` y un `reason` obligatorio', () => {
+      // El motivo se le enseña a quien se queda fuera, así que no es opcional:
+      // «no admite altas» a secas no le dice nada a un alumno que quería entrar.
+      expect(signupsSchema.parse({ frozen: true, reason: 'Cohorte completa.' })).toEqual({
+        frozen: true,
+        reason: 'Cohorte completa.',
+      });
+      expect(signupsSchema.safeParse({ frozen: true }).success).toBe(false);
+      expect(signupsSchema.safeParse({ frozen: true, reason: 'no' }).success).toBe(false);
+      expect(Object.keys(signupsSchema.shape).sort()).toEqual(['frozen', 'reason']);
+    });
+
+    it('el código que devuelven las cuatro puertas congeladas es estable', () => {
+      // Cloud y el propio LMS lo distinguen de cualquier otro 409. Cambiarlo
+      // rompe a los dos.
+      expect(SIGNUPS_FROZEN_CODE).toBe('TENANT_SIGNUPS_FROZEN');
     });
 
     it('añadir dominio lleva `hostname`', () => {

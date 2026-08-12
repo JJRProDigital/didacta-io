@@ -20,10 +20,24 @@ import { AdminTenantsController } from '../src/admin/admin-tenants.controller';
 import { ALLOW_PROVISIONING_KEY } from '../src/auth/jwt-or-provisioning.guard';
 
 /**
- * Las 7 operaciones que el plano de control necesita para dar de alta, operar
+ * Las 8 operaciones que el plano de control necesita para dar de alta, operar
  * y facturar un tenant. Ni una más.
+ *
+ * `setSignups` (U7) se añadió el 2026-08-12 a conciencia: congelar altas es el
+ * enforcement del techo de plan, y esa decisión la toma el plano de control
+ * desde fuera. El núcleo solo obedece un interruptor — no cuenta miembros ni
+ * mira licencias, y `signup-freeze.test.ts` lo vigila.
  */
-const WHITELIST = ['list', 'usage', 'getOne', 'create', 'setStatus', 'addDomain', 'removeDomain'];
+const WHITELIST = [
+  'list',
+  'usage',
+  'getOne',
+  'create',
+  'setStatus',
+  'setSignups',
+  'addDomain',
+  'removeDomain',
+];
 
 /**
  * Rutas de `AdminTenantsController` que NO abre la credencial, con el porqué:
@@ -71,7 +85,7 @@ function isAllowed(controller: new (...args: never[]) => unknown, handler: strin
 }
 
 describe('UC-C103 AC2 · superficie de la credencial de provisioning', () => {
-  it('abre exactamente las 7 rutas de la lista blanca en AdminTenantsController', () => {
+  it('abre exactamente las 8 rutas de la lista blanca en AdminTenantsController', () => {
     const abiertas = routeHandlersOf(AdminTenantsController).filter((h) =>
       isAllowed(AdminTenantsController, h),
     );

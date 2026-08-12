@@ -20,6 +20,7 @@ function makeController(opts?: {
   courses?: Array<Record<string, unknown>>;
   courseFirst?: Record<string, unknown> | null;
   tenant?: { id: string } | null;
+  signupsFrozenAt?: Date | null;
 }) {
   const billing = opts?.billing ?? {
     getCatalog: vi.fn().mockResolvedValue([]),
@@ -42,6 +43,15 @@ function makeController(opts?: {
     ),
   } as never;
   const prisma = {
+    // U7: el tenant de este harness admite altas, que es el estado por defecto
+    // de cualquier instalación. El caso congelado se prueba en
+    // `signup-freeze.test.ts`.
+    tenant: {
+      findUnique: vi.fn().mockResolvedValue({
+        signupsFrozenAt: opts?.signupsFrozenAt ?? null,
+        signupsFrozenReason: null,
+      }),
+    },
     modCoursesCourse: {
       findMany: vi.fn().mockResolvedValue(opts?.courses ?? []),
       findFirst: vi
@@ -149,6 +159,22 @@ describe('BillingPublicController — checkout anónimo', () => {
     await expect(controller.checkout(req(), COURSE, {})).rejects.toBeInstanceOf(
       StripeConfigMissingError,
     );
+  });
+
+  it('U7: con las altas congeladas no se llega a cobrar', async () => {
+    // La comprobación va ANTES que ninguna otra guarda: cobrarle a alguien que
+    // después no va a poder entrar es el peor orden posible.
+    const { controller, billing } = makeController({
+      courseFirst: { status: 'PUBLISHED' },
+      signupsFrozenAt: new Date(),
+    });
+
+    await expect(controller.checkout(req(), COURSE, {})).rejects.toMatchObject({
+      response: { code: 'TENANT_SIGNUPS_FROZEN' },
+    });
+    expect(
+      (billing as { startCheckout: ReturnType<typeof vi.fn> }).startCheckout,
+    ).not.toHaveBeenCalled();
   });
 
   it('inicia el checkout SIN usuario, con retorno a las páginas públicas /catalogo', async () => {
