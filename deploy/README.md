@@ -102,9 +102,14 @@ declara tres — la app, un Postgres con la imagen de pgvector y un Redis — y
 `meta.yaml` describe la ficha y el formulario.
 
 Para el PR en [easypanel-io/templates](https://github.com/easypanel-io/templates):
-copiar la carpeta a `templates/didacta/` con el icono como `logo.png`, añadir al
-menos una captura (`screenshot.png`) y ejecutar `npm run build` y
+copiar la carpeta tal cual a `templates/didacta/` y ejecutar `npm run build` y
 `npm run prettier`. `meta.ts` lo genera el repositorio; no se escribe a mano.
+
+**El logo y las capturas van en `assets/`, no en la raíz de la plantilla.** Su
+README dice «use these files: logo.png, screenshot.png» sin más, pero
+`scripts/build-templates.ts` los busca en `templates/<slug>/assets/`: puestos en
+la raíz, el build no falla — la ficha simplemente sale sin logo y sin captura.
+Por eso esta carpeta ya tiene la estructura final.
 
 Sin esperar al PR: `easypanel/didacta.json` es la salida de `index.ts` con los
 valores por defecto, lista para **Create from JSON**. Antes de pegarla hay que
@@ -116,11 +121,11 @@ sustituir los tres marcadores `REEMPLAZA_*` por cadenas aleatorias distintas
 `assets/` lleva el isotipo cuadrado, que es lo que piden los tres catálogos
 (icono, no logotipo con texto):
 
-| Fichero                | Uso                                                |
-| ---------------------- | -------------------------------------------------- |
-| `didacta.svg`          | Coolify (`svgs/didacta.svg`), Dokploy (`logo.svg`) |
-| `didacta-icon-128.png` | Easypanel (`logo.png`)                             |
-| `didacta-icon-512.png` | fuente para recortes futuros                       |
+| Fichero                | Uso                                                       |
+| ---------------------- | --------------------------------------------------------- |
+| `didacta.svg`          | Coolify (`public/svgs/didacta.svg`), Dokploy (`logo.svg`) |
+| `didacta-icon-128.png` | Easypanel — ya copiado en `easypanel/assets/logo.png`     |
+| `didacta-icon-512.png` | fuente para recortes futuros                              |
 
 `didacta.svg` es el SVG de marca con el isotipo recortado y el PNG interno
 reescalado a 256 px: pasa de 281 KB a 32 KB sin cambiar cómo se ve. Sigue
