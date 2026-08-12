@@ -2,9 +2,14 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # `develop` tambien, y no es un detalle: las releases se cortan de develop,
+    # asi que con solo `main` el codigo llegaba a una imagen publicada sin que
+    # CI hubiera corrido un solo test sobre el. El arreglo de tenencia de
+    # alpha.108 se mergeo con dos checks en verde de los que ninguno ejecutaba
+    # la suite.
+    branches: [main, develop]
   push:
-    branches: [main]
+    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
