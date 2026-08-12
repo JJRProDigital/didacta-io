@@ -61,7 +61,20 @@ entero y desplegar. Es el mismo camino que usa Coolify para probar plantillas
 antes de aceptarlas.
 
 Para el PR: copiar el fichero a `templates/compose/didacta.yaml` y el logo a
-`svgs/didacta.svg`.
+`public/svgs/didacta.svg`. Los PRs de servicios nuevos van contra **`next`**, no
+contra `main`.
+
+Dos cosas de ese fichero que parecen descuidos y no lo son:
+
+- **Apenas lleva comentarios, y en inglés.** El control de calidad automático de
+  Coolify (`peakoss/anti-slop`) cierra el PR si el diff añade más de 10 líneas
+  de comentario, y seis se van en los metadatos de la cabecera. Lo que explicaba
+  el fichero está aquí arriba, en «Lo que las tres plantillas hacen igual».
+- **No declara la sección `volumes:`.** Ninguna plantilla oficial de Coolify lo
+  hace: los volúmenes con nombre los crea el propio Coolify al desplegar. Como
+  efecto secundario, `docker compose config` sobre este fichero suelto da
+  «undefined volume» — es esperado, no es un fallo. Para probarlo fuera de
+  Coolify, usa el de `dokploy/`, que sí es un compose autónomo.
 
 ## Dokploy
 
