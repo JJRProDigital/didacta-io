@@ -25,7 +25,7 @@
 
 services:
   didacta:
-    image: ghcr.io/va360labs/didacta-community:0.0.1-alpha.106
+    image: ghcr.io/va360labs/didacta-community:0.0.1-alpha.107
     environment:
       # Publica el 3000 en el dominio generado por Coolify. `SERVICE_URL_DIDACTA`
       # reutiliza ese mismo valor ya con esquema (https://…).
@@ -33,7 +33,7 @@ services:
       - NODE_ENV=production
       # Fuente de verdad de compatibilidad de módulos: debe coincidir SIEMPRE
       # con el tag de la imagen de arriba.
-      - DIDACTA_CORE_VERSION=0.0.1-alpha.106
+      - DIDACTA_CORE_VERSION=0.0.1-alpha.107
       # Base absoluta de los enlaces que salen por correo (verificación,
       # invitaciones, recordatorios). Sin esto los correos llevan enlaces rotos.
       - WEB_PUBLIC_URL=$SERVICE_URL_DIDACTA

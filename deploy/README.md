@@ -117,9 +117,10 @@ fichero y las tres plantillas lo heredan sin tocar nada más.
 
 ## Mantener esto vivo
 
-Cada release de Didacta obliga a tocar la versión en **cuatro sitios de estas
+Cada release de Didacta obliga a tocar la versión en **seis sitios de estas
 plantillas**, y el `meta.json` de Dokploy exige además que coincida con el tag
-de la imagen:
+de la imagen. `bash scripts/dev-check.sh --deploy` falla si alguno se queda
+atrás:
 
 | Fichero                       | Qué actualizar                           |
 | ----------------------------- | ---------------------------------------- |
