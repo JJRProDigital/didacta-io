@@ -17,6 +17,7 @@
 #   bash scripts/dev-check.sh --format       # solo prettier check
 #   bash scripts/dev-check.sh --format-fix   # prettier --write (modificá archivos)
 #   bash scripts/dev-check.sh --web          # build de apps/web
+#   bash scripts/dev-check.sh --deploy       # versiones de deploy/ == package.json
 #
 # Notas:
 #   - pnpm + corepack está roto en Windows: invocamos los binarios con `node`
@@ -125,6 +126,52 @@ step_web_build() {
   fi
 }
 
+# Las plantillas de `deploy/` (Coolify, Dokploy, Easypanel) fijan la versión de
+# la imagen en SEIS sitios, y una que apunte a un tag inexistente deja la
+# instalación en «manifest unknown». Como esos ficheros no los toca ningún
+# build, se quedan atrás en silencio en cuanto se corta una release: este paso
+# es el único sitio donde eso se nota antes de que lo note un usuario.
+step_deploy_versions() {
+  local expected failed=0 f stale
+  expected="$(node -p "require('./package.json').version")"
+  local files=(
+    deploy/coolify/docker-compose.yaml
+    deploy/dokploy/docker-compose.yml
+    deploy/dokploy/template.toml
+    deploy/dokploy/meta.json
+    deploy/easypanel/meta.yaml
+    deploy/easypanel/didacta.json
+  )
+
+  log "▶ versiones de deploy/ == $expected"
+  for f in "${files[@]}"; do
+    if [[ ! -f "$f" ]]; then
+      fail "falta $f (¿renombrado? actualizá esta lista)"
+      failed=1
+      continue
+    fi
+    if ! grep -qF -- "$expected" "$f"; then
+      fail "$f no menciona $expected"
+      failed=1
+    fi
+    # Cualquier prerelease distinta que se haya quedado sin bumpear. El patrón
+    # solo casa `x.y.z-etiqueta.N`, así que `pgvector:pg16` o `redis:7-alpine`
+    # no lo disparan.
+    stale="$(grep -ohE '[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z]+\.[0-9]+' "$f" | grep -vxF "$expected" | sort -u | tr '\n' ' ')"
+    if [[ -n "${stale// /}" ]]; then
+      fail "$f arrastra versiones viejas: $stale"
+      failed=1
+    fi
+  done
+
+  if [[ $failed -eq 0 ]]; then
+    ok "versiones de deploy/"
+    return 0
+  fi
+  fail "versiones de deploy/ — mirá la tabla de deploy/README.md § Mantener esto vivo"
+  return 1
+}
+
 step_full_tests() {
   log "▶ delegando a scripts/test-local.sh full"
   bash "$SCRIPT_DIR/test-local.sh" full
@@ -132,10 +179,11 @@ step_full_tests() {
 
 case "$MODE" in
   --quick|"")
-    step_types && step_lint && step_format && exit 0 || exit 1
+    step_types && step_lint && step_format && step_deploy_versions && exit 0 || exit 1
     ;;
   --full)
-    step_types && step_lint && step_format && step_db && step_full_tests && exit 0 || exit 1
+    step_types && step_lint && step_format && step_deploy_versions && step_db && step_full_tests &&
+      exit 0 || exit 1
     ;;
   --types)
     step_types
@@ -155,13 +203,16 @@ case "$MODE" in
   --web)
     step_web_build
     ;;
+  --deploy)
+    step_deploy_versions
+    ;;
   -h|--help)
     grep -E '^#( |$)' "$0" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
   *)
     fail "modo desconocido: $MODE"
-    echo "Uso: bash scripts/dev-check.sh [--quick|--full|--db|--types|--lint|--format|--format-fix|--web|--help]"
+    echo "Uso: bash scripts/dev-check.sh [--quick|--full|--db|--types|--lint|--format|--format-fix|--web|--deploy|--help]"
     exit 2
     ;;
 esac

@@ -91,6 +91,12 @@ DIDACTA_DIR=aula WEB_PORT=8080 bash install.sh
 
 If you would rather do it by hand, or already run managed Postgres and Redis, follow Path A or Path B.
 
+## Self-hosting panels (Coolify, Dokploy, Easypanel)
+
+If you already run your server through one of these panels, [`deploy/`](deploy/) ships a template per platform in each one's native format: they generate secrets with the panel's own helpers, expose **a single domain** (the web app rewrites `/api/*` to the internal API) and pin the `pgvector` Postgres image Didacta requires.
+
+You can use them today by pasting them into your panel — no need to wait for the official catalogues. Per-platform details and caveats live in [`deploy/README.md`](deploy/README.md).
+
 ## Required environment variables
 
 Only **3 environment variables** are strictly required to boot. The rest have

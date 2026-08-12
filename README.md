@@ -91,6 +91,12 @@ DIDACTA_DIR=aula WEB_PORT=8080 bash install.sh
 
 Si prefieres hacerlo a mano, o ya tienes Postgres y Redis administrados, sigue el Camino A o el B.
 
+## Paneles de autoalojado (Coolify, Dokploy, Easypanel)
+
+Si ya administras tu servidor con uno de estos paneles, [`deploy/`](deploy/) trae una plantilla por plataforma, en el formato nativo de cada una: generan los secretos con sus propios helpers, publican **un solo dominio** (la web reescribe `/api/*` a la API interna) y fuerzan el Postgres con `pgvector` que Didacta necesita.
+
+Se pueden usar hoy pegándolas en el panel, sin esperar a que estén en los catálogos oficiales. El detalle de cada una y sus advertencias están en [`deploy/README.md`](deploy/README.md).
+
 ## Variables de entorno obligatorias
 
 Solo **3 variables de entorno** son estrictamente obligatorias para arrancar. El resto tienen valores por defecto razonables o se inyectan desde el compose. El conjunto completo está documentado en [`.env.example`](.env.example).
