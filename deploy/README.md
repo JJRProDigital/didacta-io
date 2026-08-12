@@ -100,19 +100,20 @@ sustituir los tres marcadores `REEMPLAZA_*` por cadenas aleatorias distintas
 
 ## Iconos
 
-`assets/` sale de [anagrama.png](../apps/web/public/brand/anagrama.png):
+`assets/` lleva el isotipo cuadrado, que es lo que piden los tres catálogos
+(icono, no logotipo con texto):
 
-| Fichero                 | Uso                          |
-| ----------------------- | ---------------------------- |
-| `didacta-icon-128.png`  | Easypanel (`logo.png`)       |
-| `didacta-icon-128.jpg`  | Dokploy, si no hay SVG       |
-| `didacta-icon-256.webp` | Coolify, si no hay SVG       |
-| `didacta-icon-512.png`  | fuente para recortes futuros |
+| Fichero                | Uso                                                |
+| ---------------------- | -------------------------------------------------- |
+| `didacta.svg`          | Coolify (`svgs/didacta.svg`), Dokploy (`logo.svg`) |
+| `didacta-icon-128.png` | Easypanel (`logo.png`)                             |
+| `didacta-icon-512.png` | fuente para recortes futuros                       |
 
-**Falta el SVG.** Coolify y Dokploy prefieren SVG con diferencia (Coolify
-acepta WebP/JPG «como último recurso»), y el anagrama solo existe rasterizado.
-Con el SVG del isotipo se sustituyen los tres primeros y las plantillas ganan
-en calidad de ficha.
+`didacta.svg` es el SVG de marca con el isotipo recortado y el PNG interno
+reescalado a 256 px: pasa de 281 KB a 32 KB sin cambiar cómo se ve. Sigue
+siendo un raster envuelto en SVG, así que **al ampliarlo se pixela**; el día
+que exista el isotipo con trazados vectoriales de verdad, se sustituye este
+fichero y las tres plantillas lo heredan sin tocar nada más.
 
 ## Mantener esto vivo
 
