@@ -9,6 +9,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { Icon, type IconName } from '@/components/icon';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -18,6 +19,7 @@ import {
   academyApi,
   onboardingApi,
   ONBOARDING_STEPS,
+  PASOS_CONTABLES,
   PASOS_OBLIGATORIOS,
   VACIO,
   type Academy,
@@ -25,27 +27,45 @@ import {
   type OnboardingStep,
 } from '@/lib/academy';
 import { publishThemeUpdate, themingApi, type TenantTheme } from '@/lib/theming';
+import { PasoAlumnos } from './paso-alumnos';
+import { PasoCurso } from './paso-curso';
+import { PasoMarca } from './paso-marca';
 
-/** Pasos que se resuelven en otra pantalla del panel, no aquí dentro. */
+/**
+ * Adónde lleva cada pendiente del resumen. Son las pantallas REALES del panel:
+ * el primer asistente enlazaba `/admin/cursos`, que no existe como ruta, y el
+ * pendiente de cursos moría en un 404.
+ */
 const DESTINOS: Partial<Record<OnboardingStep, string>> = {
-  curso: '/admin/cursos',
+  curso: '/formador/cursos',
   alumnos: '/admin/usuarios/invitar',
   cobros: '/admin/billing',
   correo: '/admin/emails',
 };
 
+/** El rail de progreso: icono y etiqueta de cada paso contable, en orden. */
+const RAIL: Array<{ paso: OnboardingStep; icono: IconName; clave: string }> = [
+  { paso: 'nombre', icono: 'edit', clave: 'pasoNombre' },
+  { paso: 'marca', icono: 'palette', clave: 'pasoMarca' },
+  { paso: 'curso', icono: 'book', clave: 'pasoCurso' },
+  { paso: 'alumnos', icono: 'users', clave: 'pasoAlumnos' },
+  { paso: 'cobros', icono: 'trending', clave: 'pasoCobros' },
+  { paso: 'correo', icono: 'mail', clave: 'pasoCorreo' },
+];
+
 /**
  * Asistente de puesta en marcha de la academia.
  *
- * Bloqueante por decisión de producto, pero **sólo `nombre` y `marca` son
+ * Bloqueante por decisión de producto, pero **solo `nombre` y `marca` son
  * obligatorios**: son los que evitan que un cliente acabe con una academia
- * llamada como su correo y con el aspecto por defecto. Lo demás —primer curso,
- * invitar alumnos, cobros, correo propio— lleva «ahora no», porque una academia
- * recién comprada legítimamente todavía no tiene alumnos ni cursos, y dejar a
- * alguien encerrado aquí por eso sería peor que no tener asistente.
+ * llamada como su correo y con el aspecto por defecto. El primer curso y los
+ * alumnos se resuelven AQUÍ DENTRO (formulario propio, sin salir); cobros y
+ * correo abren su pantalla completa en otra pestaña porque necesitan datos
+ * externos (las claves de Stripe, los DNS del correo) y duplicarlas aquí sería
+ * mentirse. Todo lo no obligatorio lleva «Ahora no».
  *
  * El progreso se guarda en el servidor a cada paso (ver `onboardingApi`), no al
- * final: si se cae la conexión en el paso 7, no se pierden los seis anteriores.
+ * final: si se cae la conexión en el paso 5, no se pierden los cuatro anteriores.
  */
 export default function BienvenidaPage() {
   const router = useRouter();
@@ -60,6 +80,10 @@ export default function BienvenidaPage() {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
+  // «Hecho» local de los pasos con formulario propio: decide si el pie ofrece
+  // «Continuar» (ya resolvió algo) o «Ahora no» (aún nada).
+  const [cursoHecho, setCursoHecho] = useState(false);
+  const [alumnosHecho, setAlumnosHecho] = useState(false);
 
   const paso = progreso.step;
   const indice = ONBOARDING_STEPS.indexOf(paso);
@@ -186,24 +210,20 @@ export default function BienvenidaPage() {
     router.replace('/inicio');
   }, [progreso, persistir, router]);
 
+  /** Abre una pantalla del panel en otra pestaña y da el paso por resuelto. */
+  const abrirYAvanzar = useCallback(
+    (destino: string) => {
+      window.open(destino, '_blank', 'noopener');
+      avanzar({ done: true });
+    },
+    [avanzar],
+  );
+
   const direccion = useMemo(() => {
     if (academia?.primaryHostname) return `https://${academia.primaryHostname}`;
     if (typeof window !== 'undefined') return window.location.origin;
     return '';
   }, [academia]);
-
-  if (cargando) {
-    return (
-      <Card>
-        <CardContent className="p-8 text-center text-muted-foreground">
-          {t('guardando')}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const esObligatorio = PASOS_OBLIGATORIOS.includes(paso);
-  const pendientes = ONBOARDING_STEPS.filter((p) => progreso.skipped.includes(p) && DESTINOS[p]);
 
   /**
    * ¿Tiene ya identidad propia? Mientras no la tenga, quien sostiene la
@@ -215,267 +235,459 @@ export default function BienvenidaPage() {
   const tieneIdentidad =
     Boolean(theme?.logoUrl) || Boolean(academia && !academia.looksAutogenerated);
 
+  const esObligatorio = PASOS_OBLIGATORIOS.includes(paso);
+  const conRail = paso !== 'bienvenida' && paso !== 'resumen';
+  const pendientes = ONBOARDING_STEPS.filter((p) => progreso.skipped.includes(p) && DESTINOS[p]);
+
+  // La cabecera se pinta SIEMPRE — también durante la carga — para que la marca
+  // no parpadee al entrar. Durante la carga enseña la de Didacta.
+  const cabecera = (
+    <header className="mb-6 flex items-center justify-center gap-2.5">
+      {!cargando && tieneIdentidad ? (
+        <>
+          {theme?.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={theme.logoUrl}
+              alt=""
+              width={32}
+              height={32}
+              className="h-8 w-8 rounded-lg object-contain"
+            />
+          ) : (
+            <div
+              className="grid h-8 w-8 place-items-center rounded-lg text-sm font-bold text-white"
+              style={{ backgroundColor: `hsl(${hue} 70% 45%)` }}
+            >
+              {(academia?.name ?? 'A').slice(0, 1).toUpperCase()}
+            </div>
+          )}
+          <span className="font-semibold text-night">{academia?.name}</span>
+        </>
+      ) : (
+        <>
+          <Image src="/brand/anagrama.png" alt="" width={26} height={26} priority />
+          <span className="font-semibold text-night">Didacta</span>
+        </>
+      )}
+    </header>
+  );
+
+  if (cargando) {
+    return (
+      <>
+        {cabecera}
+        <Card>
+          <CardContent className="space-y-4 p-8">
+            <div className="skeleton h-7 w-2/3 rounded-md" />
+            <div className="skeleton h-4 w-full rounded-md" />
+            <div className="skeleton h-4 w-5/6 rounded-md" />
+            <div className="skeleton h-32 w-full rounded-xl" />
+            <p className="text-center text-sm text-text-muted">{t('cargando')}</p>
+          </CardContent>
+        </Card>
+      </>
+    );
+  }
+
+  const railEstado = (p: OnboardingStep): 'hecho' | 'saltado' | 'actual' | 'pendiente' => {
+    if (p === paso) return 'actual';
+    if (progreso.done.includes(p)) return 'hecho';
+    if (progreso.skipped.includes(p)) return 'saltado';
+    return 'pendiente';
+  };
+
   return (
     <>
-      <header className="mb-6 flex items-center justify-center gap-2.5">
-        {tieneIdentidad ? (
-          <>
-            {theme?.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={theme.logoUrl}
-                alt=""
-                width={32}
-                height={32}
-                className="h-8 w-8 rounded-lg object-contain"
-              />
-            ) : (
-              <div
-                className="grid h-8 w-8 place-items-center rounded-lg text-sm font-bold text-white"
-                style={{ backgroundColor: `hsl(${hue} 70% 45%)` }}
+      {/* Animación de entrada de cada paso y aspecto de la barra de color.
+          Aquí y no en globals.css porque solo los usa este asistente. */}
+      <style>{`
+        @keyframes pasoIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: none; }
+        }
+        .paso-anim { animation: pasoIn 0.3s ease both; }
+        @media (prefers-reduced-motion: reduce) {
+          .paso-anim { animation: none; }
+        }
+        .slider-hue {
+          -webkit-appearance: none;
+          appearance: none;
+          height: 12px;
+          border-radius: 9999px;
+          background: linear-gradient(to right,
+            hsl(0 70% 55%), hsl(60 70% 55%), hsl(120 70% 55%),
+            hsl(180 70% 55%), hsl(240 70% 55%), hsl(300 70% 55%), hsl(360 70% 55%));
+          outline-offset: 4px;
+        }
+        .slider-hue::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 22px;
+          height: 22px;
+          border-radius: 9999px;
+          background: var(--thumb-color, #333);
+          border: 3px solid white;
+          box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+          cursor: pointer;
+        }
+        .slider-hue::-moz-range-thumb {
+          width: 22px;
+          height: 22px;
+          border-radius: 9999px;
+          background: var(--thumb-color, #333);
+          border: 3px solid white;
+          box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+          cursor: pointer;
+        }
+      `}</style>
+
+      {cabecera}
+
+      <Card className="overflow-hidden">
+        <div className={conRail ? 'md:grid md:grid-cols-[13rem_1fr]' : undefined}>
+          {conRail && (
+            <>
+              {/* Rail de progreso (escritorio): los 6 pasos, con su estado. */}
+              <nav
+                aria-label={t('progreso', { actual: indice, total: PASOS_CONTABLES })}
+                className="hidden border-r border-border-soft bg-surface-2 p-4 md:block"
               >
-                {(academia?.name ?? 'A').slice(0, 1).toUpperCase()}
+                <p className="mb-4 px-2 text-xs font-medium uppercase tracking-wide text-text-subtle">
+                  {t('progreso', { actual: indice, total: PASOS_CONTABLES })}
+                </p>
+                <ol className="space-y-1">
+                  {RAIL.map(({ paso: p, icono, clave }, i) => {
+                    const estado = railEstado(p);
+                    const visitable = ONBOARDING_STEPS.indexOf(p) < indice;
+                    return (
+                      <li key={p}>
+                        <button
+                          type="button"
+                          disabled={!visitable || guardando}
+                          aria-current={estado === 'actual' ? 'step' : undefined}
+                          onClick={() => irA(p)}
+                          className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm transition-colors ${
+                            estado === 'actual'
+                              ? 'bg-brand-100 font-semibold text-brand-800'
+                              : visitable
+                                ? 'text-text-muted hover:bg-surface-3'
+                                : 'text-text-subtle'
+                          }`}
+                        >
+                          <span
+                            className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${
+                              estado === 'hecho'
+                                ? 'bg-success-100 text-success-700'
+                                : estado === 'actual'
+                                  ? 'bg-brand-500 text-white'
+                                  : 'border border-border-strong text-text-subtle'
+                            }`}
+                          >
+                            <Icon name={estado === 'hecho' ? 'check' : icono} size={14} />
+                          </span>
+                          <span className="truncate">{t(clave as never)}</span>
+                          {estado === 'saltado' && (
+                            <span className="ml-auto text-xs text-text-subtle">{t('ahoraNo')}</span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </nav>
+
+              {/* Progreso compacto (móvil): contador + segmentos. */}
+              <div className="border-b border-border-soft p-4 md:hidden">
+                <p className="mb-2 text-sm text-text-muted">
+                  {t('progreso', { actual: indice, total: PASOS_CONTABLES })}
+                </p>
+                <div className="flex gap-1.5">
+                  {RAIL.map(({ paso: p }) => {
+                    const estado = railEstado(p);
+                    return (
+                      <div
+                        key={p}
+                        className={`h-1.5 flex-1 rounded-full ${
+                          estado === 'hecho' || estado === 'saltado'
+                            ? 'bg-brand-500'
+                            : estado === 'actual'
+                              ? 'bg-brand-300'
+                              : 'bg-border'
+                        }`}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          <CardContent className="space-y-6 p-6 sm:p-8">
+            <div key={paso} className="paso-anim space-y-6">
+              {paso === 'bienvenida' && (
+                <div className="space-y-6 py-4 text-center">
+                  <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-brand-100 text-brand-700">
+                    <Icon name="sparkles" size={28} />
+                  </span>
+                  <h1 className="font-display text-3xl font-bold tracking-tight">
+                    {t('bienvenidaTitulo')}
+                  </h1>
+                  <p className="mx-auto max-w-lg text-text-muted">{t('bienvenidaCuerpo')}</p>
+                  <ul className="mx-auto max-w-sm space-y-2.5 text-left text-sm">
+                    {[t('bienvenidaPunto1'), t('bienvenidaPunto2'), t('bienvenidaPunto3')].map(
+                      (p) => (
+                        <li key={p} className="flex items-start gap-2.5">
+                          <span
+                            aria-hidden
+                            className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-success-100 text-success-700"
+                          >
+                            <Icon name="check" size={12} />
+                          </span>
+                          <span>{p}</span>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                  <Button size="lg" onClick={() => avanzar()}>
+                    {t('bienvenidaEmpezar')}
+                  </Button>
+                </div>
+              )}
+
+              {paso === 'nombre' && (
+                <div className="space-y-5">
+                  <header className="space-y-1.5">
+                    <h1 className="font-display text-2xl font-bold tracking-tight">
+                      {t('nombreTitulo')}
+                    </h1>
+                    <p className="text-text-muted">{t('nombreCuerpo')}</p>
+                  </header>
+                  {academia?.looksAutogenerated && (
+                    <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                      {t('nombreAviso', { nombre: academia.name })}
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="nombre-academia">{t('nombreEtiqueta')}</Label>
+                    <Input
+                      id="nombre-academia"
+                      value={nombre}
+                      maxLength={120}
+                      autoFocus
+                      placeholder={t('nombrePlaceholder')}
+                      onChange={(e) => setNombre(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void guardarNombre();
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {paso === 'marca' && (
+                <PasoMarca
+                  academia={academia}
+                  theme={theme}
+                  hue={hue}
+                  onHue={setHue}
+                  onTheme={setTheme}
+                />
+              )}
+
+              {paso === 'curso' && <PasoCurso onHecho={setCursoHecho} />}
+
+              {paso === 'alumnos' && <PasoAlumnos onHecho={setAlumnosHecho} />}
+
+              {paso === 'cobros' && (
+                <div className="space-y-5">
+                  <header className="space-y-1.5">
+                    <h1 className="font-display text-2xl font-bold tracking-tight">
+                      {t('cobrosTitulo')}
+                    </h1>
+                    <p className="text-text-muted">{t('cobrosCuerpo')}</p>
+                  </header>
+                  <p className="text-sm text-text-muted">
+                    {t('cobrosAyuda')} {t('abrePestana')}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" onClick={() => abrirYAvanzar(DESTINOS.cobros!)}>
+                      {t('cobrosSi')}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => avanzar({ done: true })}>
+                      {t('cobrosNo')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {paso === 'correo' && (
+                <div className="space-y-5">
+                  <header className="space-y-1.5">
+                    <h1 className="font-display text-2xl font-bold tracking-tight">
+                      {t('correoTitulo')}
+                    </h1>
+                    <p className="text-text-muted">{t('correoCuerpo')}</p>
+                  </header>
+                  <p className="text-sm text-text-muted">
+                    {t('correoAyuda')} {t('abrePestana')}
+                  </p>
+                  <Button type="button" onClick={() => abrirYAvanzar(DESTINOS.correo!)}>
+                    {t('correoConfigurar')}
+                  </Button>
+                </div>
+              )}
+
+              {paso === 'resumen' && (
+                <div className="space-y-6">
+                  <header className="space-y-2 text-center">
+                    {theme?.logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={theme.logoUrl}
+                        alt=""
+                        width={64}
+                        height={64}
+                        className="mx-auto h-16 w-16 rounded-xl object-contain"
+                      />
+                    ) : (
+                      <span
+                        className="mx-auto grid h-16 w-16 place-items-center rounded-xl text-2xl font-bold text-white"
+                        style={{ backgroundColor: `hsl(${hue} 70% 45%)` }}
+                      >
+                        {(academia?.name ?? 'A').slice(0, 1).toUpperCase()}
+                      </span>
+                    )}
+                    <h1 className="font-display text-3xl font-bold tracking-tight">
+                      {t('resumenTitulo', { nombre: academia?.name ?? '' })}
+                    </h1>
+                    <p className="mx-auto max-w-lg text-text-muted">{t('resumenCuerpo')}</p>
+                  </header>
+
+                  <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-2 p-3">
+                    <code className="flex-1 truncate text-sm">{direccion}</code>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(direccion);
+                        setCopiado(true);
+                        window.setTimeout(() => setCopiado(false), 2000);
+                      }}
+                    >
+                      {copiado ? t('resumenDireccionCopiada') : t('resumenDireccionCopiar')}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-text-subtle">{t('resumenDominioPropio')}</p>
+
+                  {pendientes.length === 0 ? (
+                    <p className="flex items-center gap-2 rounded-lg bg-success-50 p-3 text-sm text-success-700">
+                      <Icon name="check" size={16} />
+                      {t('resumenNadaPendiente')}
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs uppercase tracking-wide text-text-subtle">
+                        {t('resumenPendiente')}
+                      </p>
+                      <ul className="space-y-2">
+                        {pendientes.map((p) => {
+                          const item = RAIL.find((r) => r.paso === p);
+                          return (
+                            <li
+                              key={p}
+                              className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
+                            >
+                              <span className="flex items-center gap-2 text-sm">
+                                {item && (
+                                  <Icon name={item.icono} size={16} className="text-text-subtle" />
+                                )}
+                                {item ? t(item.clave as never) : p}
+                              </span>
+                              <a
+                                className="flex items-center gap-1 text-sm font-semibold text-brand-600 hover:underline"
+                                href={DESTINOS[p]}
+                                target="_blank"
+                                rel="noopener"
+                              >
+                                {t('resumenAbrir')}
+                                <Icon name="arrow-right" size={14} />
+                              </a>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      <p className="text-xs text-text-subtle">{t('resumenPendienteAyuda')}</p>
+                    </div>
+                  )}
+
+                  <Button size="lg" className="w-full" onClick={() => void terminar()}>
+                    {t('resumenEntrar')}
+                  </Button>
+                </div>
+              )}
+
+              {error && (
+                <p role="alert" className="flex items-start gap-1.5 text-sm text-danger-700">
+                  <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
+                  {error}
+                </p>
+              )}
+            </div>
+
+            {/* Pie de navegación. En «bienvenida» y «resumen» el botón va arriba. */}
+            {conRail && (
+              <div className="flex items-center justify-between gap-3 border-t border-border-soft pt-4">
+                <Button variant="ghost" onClick={retroceder} disabled={guardando}>
+                  {t('atras')}
+                </Button>
+                <div className="flex items-center gap-2">
+                  {/* curso/alumnos: mientras no hayan resuelto nada, la única
+                      salida hacia delante es «Ahora no» — el pie nunca ofrece
+                      un «Continuar» que dé por hecho lo que no se hizo. */}
+                  {paso === 'curso' || paso === 'alumnos' ? (
+                    (paso === 'curso' ? cursoHecho : alumnosHecho) ? (
+                      <Button onClick={() => avanzar({ done: true })} disabled={guardando}>
+                        {t('siguiente')}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        onClick={() => avanzar({ skipped: true })}
+                        disabled={guardando}
+                      >
+                        {t('ahoraNo')}
+                      </Button>
+                    )
+                  ) : (
+                    <>
+                      {!esObligatorio && (
+                        <Button
+                          variant="ghost"
+                          onClick={() => avanzar({ skipped: true })}
+                          disabled={guardando}
+                        >
+                          {t('ahoraNo')}
+                        </Button>
+                      )}
+                      {(paso === 'nombre' || paso === 'marca') && (
+                        <Button
+                          onClick={() => {
+                            if (paso === 'nombre') return void guardarNombre();
+                            return void guardarMarca();
+                          }}
+                          disabled={guardando}
+                        >
+                          {guardando ? t('guardando') : t('siguiente')}
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             )}
-            <span className="font-semibold text-night">{academia?.name}</span>
-          </>
-        ) : (
-          <>
-            <Image src="/brand/anagrama.png" alt="" width={26} height={26} priority />
-            <span className="font-semibold text-night">Didacta</span>
-          </>
-        )}
-      </header>
-
-      <Card>
-        <CardContent className="space-y-6 p-8">
-          {/* Barra de progreso: saber cuánto queda es la mitad de la calma. */}
-          {paso !== 'bienvenida' && paso !== 'resumen' && (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">
-                {t('progreso', { actual: indice, total: ONBOARDING_STEPS.length - 2 })}
-              </p>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${(indice / (ONBOARDING_STEPS.length - 2)) * 100}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          {paso === 'bienvenida' && (
-            <div className="space-y-6 text-center">
-              <h1 className="text-3xl font-bold">{t('bienvenidaTitulo')}</h1>
-              <p className="mx-auto max-w-lg text-muted-foreground">{t('bienvenidaCuerpo')}</p>
-              <ul className="mx-auto max-w-sm space-y-2 text-left text-sm">
-                {[t('bienvenidaPunto1'), t('bienvenidaPunto2'), t('bienvenidaPunto3')].map((p) => (
-                  <li key={p} className="flex items-start gap-2">
-                    <span aria-hidden className="mt-1 text-primary">
-                      ✓
-                    </span>
-                    <span>{p}</span>
-                  </li>
-                ))}
-              </ul>
-              <Button size="lg" onClick={() => avanzar()}>
-                {t('bienvenidaEmpezar')}
-              </Button>
-            </div>
-          )}
-
-          {paso === 'nombre' && (
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold">{t('nombreTitulo')}</h1>
-              <p className="text-muted-foreground">{t('nombreCuerpo')}</p>
-              {academia?.looksAutogenerated && (
-                <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                  {t('nombreAviso', { nombre: academia.name })}
-                </p>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="nombre-academia">{t('nombreEtiqueta')}</Label>
-                <Input
-                  id="nombre-academia"
-                  value={nombre}
-                  maxLength={120}
-                  autoFocus
-                  placeholder={t('nombrePlaceholder')}
-                  onChange={(e) => setNombre(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void guardarNombre();
-                  }}
-                />
-              </div>
-            </div>
-          )}
-
-          {paso === 'marca' && (
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold">{t('marcaTitulo')}</h1>
-              <p className="text-muted-foreground">{t('marcaCuerpo')}</p>
-              <div className="space-y-2">
-                <Label htmlFor="color-marca">{t('marcaColor')}</Label>
-                <input
-                  id="color-marca"
-                  type="range"
-                  min={0}
-                  max={360}
-                  value={hue}
-                  onChange={(e) => setHue(Number(e.target.value))}
-                  className="w-full"
-                  style={{
-                    background:
-                      'linear-gradient(to right, hsl(0 70% 55%), hsl(60 70% 55%), hsl(120 70% 55%), hsl(180 70% 55%), hsl(240 70% 55%), hsl(300 70% 55%), hsl(360 70% 55%))',
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">{t('marcaColorAyuda')}</p>
-              </div>
-              {/* Vista previa: el color se entiende viéndolo, no leyendo un número. */}
-              <div className="rounded-xl border p-4">
-                <p className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">
-                  {t('marcaVista')}
-                </p>
-                <div className="flex items-center gap-3">
-                  <div
-                    className="grid h-12 w-12 place-items-center rounded-lg font-bold text-white"
-                    style={{ backgroundColor: `hsl(${hue} 70% 45%)` }}
-                  >
-                    {(academia?.name ?? 'A').slice(0, 1).toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="font-semibold">{academia?.name}</p>
-                    <p className="text-sm text-muted-foreground">{academia?.primaryHostname}</p>
-                  </div>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">{t('marcaLogoAyuda')}</p>
-            </div>
-          )}
-
-          {paso === 'direccion' && (
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold">{t('direccionTitulo')}</h1>
-              <p className="text-muted-foreground">{t('direccionCuerpo')}</p>
-              <div className="flex items-center gap-2 rounded-lg border bg-muted/40 p-3">
-                <code className="flex-1 truncate text-sm">{direccion}</code>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(direccion);
-                    setCopiado(true);
-                    window.setTimeout(() => setCopiado(false), 2000);
-                  }}
-                >
-                  {copiado ? t('direccionCopiado') : t('direccionCopiar')}
-                </Button>
-              </div>
-              <div className="rounded-lg border p-4">
-                <p className="font-semibold">{t('direccionPropioTitulo')}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{t('direccionPropioCuerpo')}</p>
-              </div>
-            </div>
-          )}
-
-          {(['curso', 'alumnos', 'cobros', 'correo'] as const).includes(
-            paso as 'curso' | 'alumnos' | 'cobros' | 'correo',
-          ) && (
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold">{t(`${paso}Titulo` as never)}</h1>
-              <p className="text-muted-foreground">{t(`${paso}Cuerpo` as never)}</p>
-              {(paso === 'cobros' || paso === 'correo') && (
-                <p className="text-sm text-muted-foreground">{t(`${paso}Ayuda` as never)}</p>
-              )}
-              <Button
-                variant="outline"
-                onClick={() => {
-                  // Se abre en otra pestaña a propósito: la pantalla de destino ya
-                  // existe y es completa, y así el asistente no pierde el sitio.
-                  window.open(DESTINOS[paso] ?? '/inicio', '_blank', 'noopener');
-                  avanzar({ done: true });
-                }}
-              >
-                {paso === 'cobros'
-                  ? t('cobrosSi')
-                  : paso === 'correo'
-                    ? t('correoConfigurar')
-                    : t('siguiente')}
-              </Button>
-            </div>
-          )}
-
-          {paso === 'resumen' && (
-            <div className="space-y-5">
-              <h1 className="text-2xl font-bold">
-                {t('resumenTitulo', { nombre: academia?.name ?? '' })}
-              </h1>
-              <p className="text-muted-foreground">{t('resumenCuerpo')}</p>
-              {pendientes.length === 0 ? (
-                <p className="rounded-lg bg-muted/40 p-3 text-sm">{t('resumenNadaPendiente')}</p>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    {t('resumenPendiente')}
-                  </p>
-                  <ul className="space-y-2">
-                    {pendientes.map((p) => (
-                      <li
-                        key={p}
-                        className="flex items-center justify-between rounded-lg border p-3"
-                      >
-                        <span className="text-sm">
-                          {t(`paso${p.charAt(0).toUpperCase()}${p.slice(1)}` as never)}
-                        </span>
-                        <a
-                          className="text-sm font-semibold text-primary hover:underline"
-                          href={DESTINOS[p]}
-                        >
-                          {t('siguiente')} →
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <Button size="lg" className="w-full" onClick={() => void terminar()}>
-                {t('resumenEntrar')}
-              </Button>
-            </div>
-          )}
-
-          {error && <p className="text-sm text-destructive">{error}</p>}
-
-          {/* Pie de navegación. En «bienvenida» y «resumen» el botón va arriba. */}
-          {paso !== 'bienvenida' && paso !== 'resumen' && (
-            <div className="flex items-center justify-between gap-3 border-t pt-4">
-              <Button variant="ghost" onClick={retroceder} disabled={guardando}>
-                {t('atras')}
-              </Button>
-              <div className="flex items-center gap-2">
-                {!esObligatorio && (
-                  <Button
-                    variant="ghost"
-                    onClick={() => avanzar({ skipped: true })}
-                    disabled={guardando}
-                  >
-                    {t('ahoraNo')}
-                  </Button>
-                )}
-                <Button
-                  onClick={() => {
-                    if (paso === 'nombre') return void guardarNombre();
-                    if (paso === 'marca') return void guardarMarca();
-                    return avanzar({ done: true });
-                  }}
-                  disabled={guardando}
-                >
-                  {guardando ? t('guardando') : t('siguiente')}
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
+          </CardContent>
+        </div>
       </Card>
     </>
   );

@@ -28,18 +28,28 @@ export const academyApi = {
   },
 };
 
-/** Los pasos del asistente, en el orden en que se recorren. */
+/**
+ * Los pasos del asistente, en el orden en que se recorren.
+ *
+ * `direccion` ya no es un paso: era una pantalla puramente informativa y su
+ * contenido (la URL del aula + copiar + dominio propio) vive ahora en el
+ * resumen. `normalizar()` absorbe el cambio para progresos guardados con el
+ * paso viejo: un `step` desconocido cae a `bienvenida` y las entradas
+ * desconocidas de `done`/`skipped` se filtran.
+ */
 export const ONBOARDING_STEPS = [
   'bienvenida',
   'nombre',
   'marca',
-  'direccion',
   'curso',
   'alumnos',
   'cobros',
   'correo',
   'resumen',
 ] as const;
+
+/** Pasos que cuentan para el «Paso X de N» (todos menos portada y resumen). */
+export const PASOS_CONTABLES = ONBOARDING_STEPS.length - 2;
 
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 

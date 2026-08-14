@@ -33,7 +33,7 @@ export default function BienvenidaLayout({ children }: { children: ReactNode }) 
           style={{ backgroundColor: 'hsl(174 70% 80%)' }}
         />
       </div>
-      <div className="relative z-10 w-full max-w-3xl py-8">{children}</div>
+      <div className="relative z-10 w-full max-w-4xl py-8">{children}</div>
     </main>
   );
 }
