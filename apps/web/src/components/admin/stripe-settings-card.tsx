@@ -60,10 +60,17 @@ interface ToastState {
 export interface StripeSettingsCardProps {
   /** Inyectable para tests: permite pasar un cliente fake sin tocar fetch. */
   api?: typeof adminStripeApi;
+  /**
+   * Avisa al contenedor (el asistente de bienvenida) de que el tenant tiene
+   * configuración propia: al guardarla aquí, o ya al cargar si existía de
+   * antes. Debe ser una referencia estable (useCallback/setState).
+   */
+  onSaved?: () => void;
 }
 
 export function StripeSettingsCard({
   api = adminStripeApi,
+  onSaved,
 }: StripeSettingsCardProps): React.JSX.Element {
   const t = useTranslations('adminPagos');
   const tErrors = useTranslations('errors');
@@ -83,6 +90,7 @@ export function StripeSettingsCard({
         const data = await api.get();
         if (cancelled) return;
         setDto(data);
+        if (data.hasTenantConfig) onSaved?.();
       } catch (err) {
         if (cancelled) return;
         setLoadError(
@@ -94,7 +102,7 @@ export function StripeSettingsCard({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api]);
+  }, [api, onSaved]);
 
   async function handleSubmit(e: FormEvent): Promise<void> {
     e.preventDefault();
@@ -122,6 +130,7 @@ export function StripeSettingsCard({
       const updated = await api.upsert(payload);
       setDto(updated);
       setForm(EMPTY_FORM);
+      onSaved?.();
       setToast({
         variant: 'success',
         message: t('stripe.savedInfo'),

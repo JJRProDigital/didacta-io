@@ -87,11 +87,18 @@ export interface SmtpSettingsCardProps {
    * lo lee de `authStorage.getSession()`. Inyectable para tests.
    */
   currentAdminEmail?: string | null;
+  /**
+   * Avisa al contenedor (el asistente de bienvenida) de que el tenant tiene
+   * configuración propia: al guardarla aquí, o ya al cargar si existía de
+   * antes. Debe ser una referencia estable (useCallback/setState).
+   */
+  onSaved?: () => void;
 }
 
 export function SmtpSettingsCard({
   api = adminSmtpApi,
   currentAdminEmail,
+  onSaved,
 }: SmtpSettingsCardProps): React.JSX.Element {
   const t = useTranslations('adminSso');
   const tErrors = useTranslations('errors');
@@ -123,6 +130,7 @@ export function SmtpSettingsCard({
           fromEmail: data.fromEmail ?? '',
           fromName: data.fromName ?? '',
         });
+        if (data.hasTenantConfig) onSaved?.();
       } catch (err) {
         if (cancelled) return;
         setLoadError(
@@ -133,7 +141,7 @@ export function SmtpSettingsCard({
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [api, onSaved]);
 
   // Prellenado del modal de prueba con el email del admin.
   useEffect(() => {
@@ -179,6 +187,7 @@ export function SmtpSettingsCard({
       const updated = await api.upsert(payload);
       setDto(updated);
       setForm((f) => ({ ...f, password: '' }));
+      onSaved?.();
       setToast({ variant: 'success', message: t('smtp.saved') });
     } catch (err) {
       setToast({

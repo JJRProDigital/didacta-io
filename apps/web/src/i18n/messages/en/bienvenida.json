@@ -6,7 +6,6 @@
   "guardando": "Saving…",
   "cargando": "Getting your school ready…",
   "errorGuardar": "We couldn't save that change. Please try again.",
-  "abrePestana": "Opens in a new tab; the assistant waits for you here.",
 
   "pasoNombre": "Name",
   "pasoMarca": "Logo & color",
@@ -47,7 +46,6 @@
   "marcaModoSoloAyuda": "For logos that carry the name inside: shown whole, at its own size.",
   "marcaModoConNombre": "Logo and name",
   "marcaModoConNombreAyuda": "For square or textless logos: the name goes next to it.",
-  "pestanaAbierta": "Opened in another tab. When you're done there, continue here.",
   "marcaColor": "Your color",
   "marcaColorAyuda": "Pick one, or fine-tune with the bar. You'll see it applied instantly.",
   "marcaColorSlider": "Fine-tune the color",
@@ -84,14 +82,11 @@
 
   "cobrosTitulo": "Will you charge for your courses?",
   "cobrosCuerpo": "You can sell your courses with card payments through Stripe. The money goes straight to your account — we never touch it.",
-  "cobrosAyuda": "Connecting Stripe needs your Stripe account keys, so it happens in its own screen.",
-  "cobrosSi": "Open payment settings",
   "cobrosNo": "I don't sell courses",
 
   "correoTitulo": "Emails, under your name",
-  "correoCuerpo": "Right now, emails to your students go out from Didacta. If you want them sent from your own address, it's set up in the email screen.",
+  "correoCuerpo": "Right now, emails to your students go out from Didacta. If you want them sent from your own address, set it up right here.",
   "correoAyuda": "It needs a few technical details that whoever manages your email or website usually has. There's no rush at all.",
-  "correoConfigurar": "Open email settings",
 
   "resumenTitulo": "Done, {nombre}",
   "resumenCuerpo": "Your school now has your name and your look. This is its address — share it with anyone.",

@@ -9,6 +9,8 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { SmtpSettingsCard } from '@/components/admin/smtp-settings-card';
+import { StripeSettingsCard } from '@/components/admin/stripe-settings-card';
 import { Icon, type IconName } from '@/components/icon';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -54,11 +56,11 @@ const RAIL: Array<{ paso: OnboardingStep; icono: IconName; clave: string }> = [
  *
  * Bloqueante por decisión de producto, pero **solo `nombre` y `marca` son
  * obligatorios**: son los que evitan que un cliente acabe con una academia
- * llamada como su correo y con el aspecto por defecto. El primer curso y los
- * alumnos se resuelven AQUÍ DENTRO (formulario propio, sin salir); cobros y
- * correo abren su pantalla completa en otra pestaña porque necesitan datos
- * externos (las claves de Stripe, los DNS del correo) y duplicarlas aquí sería
- * mentirse. Todo lo no obligatorio lleva «Ahora no».
+ * llamada como su correo y con el aspecto por defecto. Los cuatro pasos
+ * restantes se resuelven AQUÍ DENTRO, sin salir: curso y alumnos con su
+ * formulario propio, y cobros y correo embebiendo las mismas cards de
+ * Configuración (`StripeSettingsCard`, `SmtpSettingsCard`) — mandarlos a otra
+ * pestaña rompía el hilo del asistente. Todo lo no obligatorio lleva «Ahora no».
  *
  * El progreso se guarda en el servidor a cada paso (ver `onboardingApi`), no al
  * final: si se cae la conexión en el paso 5, no se pierden los cuatro anteriores.
@@ -79,14 +81,17 @@ export default function BienvenidaPage() {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
-  // «Hecho» local de los pasos que se resuelven en la propia pantalla o
-  // abriendo la suya: decide si el pie ofrece «Continuar» (ya resolvió algo)
-  // o «Ahora no» (aún nada). Nunca se avanza en el momento de abrir otra
-  // pestaña — eso dejaba al usuario en el resumen sin entender qué pasó.
+  // «Hecho» local de los pasos que se resuelven en la propia pantalla: decide
+  // si el pie ofrece «Continuar» (ya resolvió algo) o «Ahora no» (aún nada).
+  // En cobros y correo lo marcan las cards embebidas al guardar — o al cargar,
+  // si el tenant ya tenía configuración propia de antes.
   const [cursoHecho, setCursoHecho] = useState(false);
   const [alumnosHecho, setAlumnosHecho] = useState(false);
   const [cobrosHecho, setCobrosHecho] = useState(false);
   const [correoHecho, setCorreoHecho] = useState(false);
+  // Referencias estables: son dependencia del efecto de carga de las cards.
+  const marcarCobrosHecho = useCallback(() => setCobrosHecho(true), []);
+  const marcarCorreoHecho = useCallback(() => setCorreoHecho(true), []);
 
   const paso = progreso.step;
   const indice = ONBOARDING_STEPS.indexOf(paso);
@@ -518,39 +523,15 @@ export default function BienvenidaPage() {
                     </h1>
                     <p className="text-text-muted">{t('cobrosCuerpo')}</p>
                   </header>
-                  <p className="text-sm text-text-muted">
-                    {t('cobrosAyuda')} {t('abrePestana')}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {/* Un ancla de verdad, no window.open: los bloqueadores de
-                        ventanas emergentes se lo tragaban en silencio y el
-                        asistente saltaba al resumen sin abrir nada. Y NO se
-                        avanza al abrir — el pie ofrece «Continuar» cuando la
-                        pestaña ya está abierta y el usuario decide volver. */}
-                    <Button asChild>
-                      <a
-                        href={DESTINOS.cobros}
-                        target="_blank"
-                        rel="noopener"
-                        onClick={() => {
-                          // Sin el pase, el gate del shell devuelve la pestaña
-                          // nueva a /bienvenida y este enlace no lleva a nada.
-                          concederPaseDeBienvenida();
-                          setCobrosHecho(true);
-                        }}
-                      >
-                        {t('cobrosSi')}
-                      </a>
-                    </Button>
+                  {/* La misma card de Configuración → Pagos, embebida: salir a
+                      otra pestaña rompía el hilo del asistente. Al guardar (o
+                      si ya había config propia) marca el paso hecho y el pie
+                      pasa de «Ahora no» a «Continuar». */}
+                  <StripeSettingsCard onSaved={marcarCobrosHecho} />
+                  {!cobrosHecho && (
                     <Button type="button" variant="outline" onClick={() => avanzar({ done: true })}>
                       {t('cobrosNo')}
                     </Button>
-                  </div>
-                  {cobrosHecho && (
-                    <p className="flex items-center gap-1.5 text-sm text-success-700">
-                      <Icon name="check" size={16} />
-                      {t('pestanaAbierta')}
-                    </p>
                   )}
                 </div>
               )}
@@ -563,29 +544,10 @@ export default function BienvenidaPage() {
                     </h1>
                     <p className="text-text-muted">{t('correoCuerpo')}</p>
                   </header>
-                  <p className="text-sm text-text-muted">
-                    {t('correoAyuda')} {t('abrePestana')}
-                  </p>
-                  {/* Ancla real y sin auto-avance, igual que en cobros. */}
-                  <Button asChild>
-                    <a
-                      href={DESTINOS.correo}
-                      target="_blank"
-                      rel="noopener"
-                      onClick={() => {
-                        concederPaseDeBienvenida();
-                        setCorreoHecho(true);
-                      }}
-                    >
-                      {t('correoConfigurar')}
-                    </a>
-                  </Button>
-                  {correoHecho && (
-                    <p className="flex items-center gap-1.5 text-sm text-success-700">
-                      <Icon name="check" size={16} />
-                      {t('pestanaAbierta')}
-                    </p>
-                  )}
+                  <p className="text-sm text-text-muted">{t('correoAyuda')}</p>
+                  {/* La card de Configuración → Notificaciones (SMTP), embebida
+                      igual que la de cobros. */}
+                  <SmtpSettingsCard onSaved={marcarCorreoHecho} />
                 </div>
               )}
 

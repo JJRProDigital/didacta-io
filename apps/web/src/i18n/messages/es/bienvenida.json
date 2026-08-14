@@ -6,7 +6,6 @@
   "guardando": "Guardando…",
   "cargando": "Preparando tu academia…",
   "errorGuardar": "No hemos podido guardar el cambio. Inténtalo otra vez.",
-  "abrePestana": "Se abre en otra pestaña; el asistente te espera aquí.",
 
   "pasoNombre": "Nombre",
   "pasoMarca": "Logo y color",
@@ -47,7 +46,6 @@
   "marcaModoSoloAyuda": "Para logos que ya llevan el nombre dentro: se ve completo, a su tamaño.",
   "marcaModoConNombre": "Logo y nombre",
   "marcaModoConNombreAyuda": "Para logos cuadrados o sin texto: el nombre va al lado.",
-  "pestanaAbierta": "Abierta en otra pestaña. Cuando termines ahí, continúa por aquí.",
   "marcaColor": "Tu color",
   "marcaColorAyuda": "Elige uno o afina con la barra. Lo verás aplicado al momento.",
   "marcaColorSlider": "Ajuste fino del color",
@@ -84,14 +82,11 @@
 
   "cobrosTitulo": "¿Vas a cobrar por tus cursos?",
   "cobrosCuerpo": "Puedes vender tus cursos con pago por tarjeta a través de Stripe. El dinero va directo a tu cuenta: nosotros no lo tocamos.",
-  "cobrosAyuda": "Conectar Stripe pide las claves de tu cuenta de Stripe, así que se hace en su propia pantalla.",
-  "cobrosSi": "Abrir la configuración de cobros",
   "cobrosNo": "No vendo cursos",
 
   "correoTitulo": "Los correos, con tu nombre",
-  "correoCuerpo": "Ahora mismo los correos a tus alumnos salen desde Didacta. Si quieres que salgan desde tu propia dirección, se configura en la pantalla de correo.",
+  "correoCuerpo": "Ahora mismo los correos a tus alumnos salen desde Didacta. Si quieres que salgan desde tu propia dirección, configúralo aquí mismo.",
   "correoAyuda": "Hacen falta unos datos técnicos que suele tener quien te gestiona el correo o la web. No corre ninguna prisa.",
-  "correoConfigurar": "Abrir la configuración de correo",
 
   "resumenTitulo": "Listo, {nombre}",
   "resumenCuerpo": "Tu academia ya tiene tu nombre y tu cara. Esta es su dirección: compártela con quien quieras.",
