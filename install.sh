@@ -28,7 +28,7 @@
 #   WEB_PORT / API_PORT / MAILPIT_UI_PORT …    Puertos publicados
 set -euo pipefail
 
-DEFAULT_IMAGE_TAG='0.0.1-alpha.111'
+DEFAULT_IMAGE_TAG='0.0.1-alpha.112'
 
 DIR="${DIDACTA_DIR:-didacta}"
 IMAGE_TAG="${DIDACTA_IMAGE_TAG:-$DEFAULT_IMAGE_TAG}"
