@@ -94,33 +94,51 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     // `undefined` (sesiones guardadas antes del flag) y `null` (usuarios sin
     // backfill), de modo que también se gatea a quienes NO entran por primera
     // vez. Solo se libera al completar el onboarding (timestamp truthy).
-    if (!current.user.onboardingCompletedAt) {
-      // Ídem: el asistente de onboarding consume este destino al terminar.
-      // Cubre también el login SSO/WP-SSO, cuya sesión no trae el flag y pasa
-      // SIEMPRE por este gate antes de llegar al deep link.
-      rememberIntendedPath(window.location.pathname + window.location.search);
-      router.replace('/onboarding');
-      return;
-    }
-    // Puesta en marcha de la ACADEMIA (distinta del onboarding de perfil de
-    // arriba, que es por usuario). Solo para quien la administra: a un alumno
-    // no le corresponde ponerle nombre ni color, y verlo sería desconcertante.
-    //
-    // El estado vive en el servidor, así que hay que preguntarlo — pero solo
-    // una vez por pestaña: si no, cada navegación pagaría una llamada. Se
-    // cachea en `sessionStorage` porque el asistente lo marca al terminar y una
-    // pestaña nueva vuelve a preguntar, que es justo el comportamiento correcto.
+    /**
+     * Dos asistentes, y el ORDEN importa.
+     *
+     * El de perfil (`/onboarding`) pide foto —obligatoria—, nombre e idioma. El
+     * de academia (`/bienvenida`) le pone nombre y marca al negocio recién
+     * comprado. Puestos al revés, a quien acaba de pagar se le exige una foto
+     * suya antes de dejarle tocar su academia, que es un primer contacto
+     * pésimo: lo que ha comprado es la academia, no un perfil.
+     *
+     * Así que para quien la administra va primero la academia. Al terminar,
+     * `/bienvenida` manda a `/inicio` y este mismo gate se encarga entonces del
+     * perfil. Para un alumno no cambia nada: su puerta sigue siendo la de
+     * perfil, porque ponerle nombre a la academia no le corresponde.
+     *
+     * La consulta es asíncrona (el estado vive en el servidor), así que este
+     * bloque hace `return` y resuelve dentro del `then`: si cayera al gate de
+     * perfil mientras espera, se iría a `/onboarding` igualmente y el orden
+     * volvería a invertirse. Solo se pregunta una vez por pestaña.
+     */
+    const irAPerfilSiHaceFalta = () => {
+      if (!current.user.onboardingCompletedAt) {
+        // El asistente consume este destino al terminar. Cubre también el login
+        // SSO/WP-SSO, cuya sesión no trae el flag.
+        rememberIntendedPath(window.location.pathname + window.location.search);
+        router.replace('/onboarding');
+        return true;
+      }
+      return false;
+    };
+
     const administra = current.user.roles.some((r) => ['super_admin', 'tenant_admin'].includes(r));
     if (administra && window.sessionStorage.getItem(ACADEMIA_LISTA_KEY) !== '1') {
       void onboardingApi.read().then((prog) => {
-        if (prog.completedAt) {
-          window.sessionStorage.setItem(ACADEMIA_LISTA_KEY, '1');
+        if (!prog.completedAt) {
+          rememberIntendedPath(window.location.pathname + window.location.search);
+          router.replace('/bienvenida');
           return;
         }
-        rememberIntendedPath(window.location.pathname + window.location.search);
-        router.replace('/bienvenida');
+        window.sessionStorage.setItem(ACADEMIA_LISTA_KEY, '1');
+        if (!irAPerfilSiHaceFalta()) setSession(current);
       });
+      return;
     }
+
+    if (irAPerfilSiHaceFalta()) return;
     setSession(current);
   }, [router, pathname]);
 
