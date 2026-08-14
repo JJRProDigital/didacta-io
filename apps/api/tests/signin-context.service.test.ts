@@ -123,6 +123,7 @@ describe('SigninContextService', () => {
       subheadline: null,
       brandHue: 213,
       brandSaturation: 70,
+      logoDisplayMode: 'logo_only',
       stats: { activeMembers: 0, publishedCourses: 0 },
       membershipPageActive: false,
     });

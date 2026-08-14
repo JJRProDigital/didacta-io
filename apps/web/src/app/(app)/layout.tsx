@@ -19,7 +19,7 @@ import { ReferralsPromoButton } from '@/components/referrals-promo-button';
 import { NotificationsProvider } from '@/components/notifications-provider';
 import { NotificationsToaster } from '@/components/notifications-toaster';
 import { FloatingChat, MessagingProvider } from '@/modules/messaging';
-import { onboardingApi } from '@/lib/academy';
+import { hayPaseDeBienvenida, onboardingApi } from '@/lib/academy';
 import { authStorage, type StoredSession } from '@/lib/auth-storage';
 import { clearIntendedPath, rememberIntendedPath } from '@/lib/post-login-redirect';
 import { meApi } from '@/lib/me';
@@ -126,6 +126,19 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
     const administra = current.user.roles.some((r) => ['super_admin', 'tenant_admin'].includes(r));
     if (administra && window.sessionStorage.getItem(ACADEMIA_LISTA_KEY) !== '1') {
+      /**
+       * El PASE del asistente. Sus enlaces («Abrir la configuración de
+       * cobros», el editor del curso, los pendientes del resumen) abren
+       * pestaña nueva — y una pestaña nueva pasa por ESTE gate, que sin el
+       * pase la devolvía a `/bienvenida`: los enlaces del asistente eran
+       * imposibles de usar. El pase vive en localStorage (las pestañas lo
+       * comparten), caduca solo y NO marca ACADEMIA_LISTA_KEY: al expirar,
+       * el asistente vuelve a ser bloqueante como siempre.
+       */
+      if (hayPaseDeBienvenida()) {
+        setSession(current);
+        return;
+      }
       void onboardingApi.read().then((prog) => {
         if (!prog.completedAt) {
           rememberIntendedPath(window.location.pathname + window.location.search);

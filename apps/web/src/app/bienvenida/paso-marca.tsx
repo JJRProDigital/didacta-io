@@ -10,7 +10,12 @@ import { useTranslations } from 'next-intl';
 import { Icon } from '@/components/icon';
 import { Button } from '@/components/ui/button';
 import { authStorage } from '@/lib/auth-storage';
-import { publishThemeUpdate, themingApi, type TenantTheme } from '@/lib/theming';
+import {
+  publishThemeUpdate,
+  themingApi,
+  type LogoDisplayMode,
+  type TenantTheme,
+} from '@/lib/theming';
 import type { Academy } from '@/lib/academy';
 
 /** Los mismos tipos que acepta `uploadLogoSchema` en la API. */
@@ -40,6 +45,10 @@ interface Props {
   theme: TenantTheme | null;
   hue: number;
   onHue: (hue: number) => void;
+  /** Cómo se presenta la marca (solo logo / logo y nombre). Vive en la página
+   * para que la cabecera del asistente lo refleje en vivo al elegirlo. */
+  modo: LogoDisplayMode;
+  onModo: (modo: LogoDisplayMode) => void;
   onTheme: (theme: TenantTheme) => void;
 }
 
@@ -52,7 +61,7 @@ interface Props {
  * persiste al continuar, porque mientras se juega con la barra no hay un valor
  * «elegido» todavía.
  */
-export function PasoMarca({ academia, theme, hue, onHue, onTheme }: Props) {
+export function PasoMarca({ academia, theme, hue, onHue, modo, onModo, onTheme }: Props) {
   const t = useTranslations('bienvenida');
   const inputRef = useRef<HTMLInputElement>(null);
   const [subiendo, setSubiendo] = useState(false);
@@ -140,41 +149,83 @@ export function PasoMarca({ academia, theme, hue, onHue, onTheme }: Props) {
           }}
         />
         {logoUrl ? (
-          <div className="flex items-center gap-4 rounded-xl border border-border bg-surface-2 p-4">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={logoUrl}
-              alt=""
-              width={56}
-              height={56}
-              className="h-14 w-14 rounded-lg bg-white object-contain shadow-sm"
-            />
-            <div className="min-w-0 flex-1">
-              <p className="flex items-center gap-1.5 text-sm font-medium text-success-700">
-                <Icon name="check" size={16} />
-                {t('marcaLogoSubido')}
-              </p>
+          <div className="space-y-4 rounded-xl border border-border bg-surface-2 p-4">
+            <div className="flex items-center gap-4">
+              {/* A su ancho natural: embutir un logo horizontal en un cuadrado
+                  lo hacía ilegible. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={logoUrl}
+                alt=""
+                className="h-12 w-auto max-w-[200px] rounded-lg bg-white object-contain p-1 shadow-sm"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-1.5 text-sm font-medium text-success-700">
+                  <Icon name="check" size={16} />
+                  {t('marcaLogoSubido')}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={subiendo || quitando}
+                  onClick={() => inputRef.current?.click()}
+                >
+                  {subiendo ? t('marcaLogoSubiendo') : t('marcaLogoCambiar')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={subiendo || quitando}
+                  onClick={() => void quitar()}
+                >
+                  {quitando ? t('guardando') : t('marcaLogoQuitar')}
+                </Button>
+              </div>
             </div>
-            <div className="flex shrink-0 gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={subiendo || quitando}
-                onClick={() => inputRef.current?.click()}
-              >
-                {subiendo ? t('marcaLogoSubiendo') : t('marcaLogoCambiar')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={subiendo || quitando}
-                onClick={() => void quitar()}
-              >
-                {quitando ? t('guardando') : t('marcaLogoQuitar')}
-              </Button>
-            </div>
+
+            {/* ¿Se enseña el nombre junto al logo, o el logo va solo? La
+                elección manda en el sidebar del aula, /signin y todas las
+                pantallas con marca. La vista previa de abajo la refleja. */}
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">{t('marcaModo')}</legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    { valor: 'logo_only', titulo: 'marcaModoSolo', ayuda: 'marcaModoSoloAyuda' },
+                    {
+                      valor: 'logo_and_name',
+                      titulo: 'marcaModoConNombre',
+                      ayuda: 'marcaModoConNombreAyuda',
+                    },
+                  ] as const
+                ).map((op) => {
+                  const activo = modo === op.valor;
+                  return (
+                    <button
+                      key={op.valor}
+                      type="button"
+                      aria-pressed={activo}
+                      onClick={() => onModo(op.valor)}
+                      className={`rounded-lg border p-3 text-left transition-colors ${
+                        activo
+                          ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-500'
+                          : 'border-border bg-surface hover:border-brand-300'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 text-sm font-semibold">
+                        {activo && <Icon name="check" size={14} className="text-brand-600" />}
+                        {t(op.titulo)}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-text-muted">{t(op.ayuda)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
           </div>
         ) : (
           <button
@@ -251,11 +302,20 @@ export function PasoMarca({ academia, theme, hue, onHue, onTheme }: Props) {
       <section aria-hidden="true" className="space-y-2">
         <p className="text-xs uppercase tracking-wide text-text-subtle">{t('marcaVista')}</p>
         <div className="overflow-hidden rounded-xl border border-border shadow-sm">
-          {/* Barra superior del aula, con su logo y su nombre. */}
+          {/* Barra superior del aula, fiel al modo elegido: solo el logo a su
+              ancho, o logo compacto + nombre. */}
           <div className="flex items-center gap-2 border-b border-border bg-white px-4 py-2.5">
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={logoUrl} alt="" className="h-6 w-6 rounded object-contain" />
+              <img
+                src={logoUrl}
+                alt=""
+                className={
+                  modo === 'logo_only'
+                    ? 'h-6 w-auto max-w-[150px] object-contain'
+                    : 'h-6 w-auto max-w-[48px] object-contain'
+                }
+              />
             ) : (
               <span
                 className="grid h-6 w-6 place-items-center rounded text-xs font-bold text-white"
@@ -264,7 +324,9 @@ export function PasoMarca({ academia, theme, hue, onHue, onTheme }: Props) {
                 {inicial}
               </span>
             )}
-            <span className="text-sm font-semibold">{academia?.name}</span>
+            {(!logoUrl || modo === 'logo_and_name') && (
+              <span className="text-sm font-semibold">{academia?.name}</span>
+            )}
           </div>
           <div className="flex">
             {/* Barra lateral tintada con su color, como en el aula real. */}

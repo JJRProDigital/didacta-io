@@ -6,6 +6,7 @@ function makeTheme(overrides: Partial<TenantTheme> = {}): TenantTheme {
     tenantId: 'tenant-1',
     logoUrl: null,
     logoUploaded: false,
+    logoDisplayMode: 'logo_only',
     faviconUrl: null,
     brandHue: 213,
     brandSaturation: 70,

@@ -160,6 +160,7 @@ export function SidebarContent({
   const t = useTranslations('shell');
   const theme = useTenantTheme();
   const logoUrl = theme?.logoUrl ?? null;
+  const logoDisplayMode = theme?.logoDisplayMode ?? 'logo_only';
   // Nombre visible de la organización: el nombre real del tenant (editable en
   // /admin/tenants), no el slug capitalizado. Fallback al slug si aún no se
   // resolvió el tenant por host.
@@ -420,11 +421,26 @@ export function SidebarContent({
     <>
       {/* ── Community header ── */}
       <div className="flex items-center gap-2 border-b border-white/8 px-4 py-3.5">
-        {logoUrl ? (
-          // Con logo del tenant, el logo ES la cabecera: se pinta a lo ancho y
-          // se quitan el nombre, el subtítulo "Comunidad" y el chevron. El
-          // nombre repetía lo que ya dice el logo, y el chevron era una flecha
-          // muerta (el <button> que la envolvía no tenía onClick).
+        {logoUrl && logoDisplayMode === 'logo_and_name' ? (
+          // Modo «logo y nombre» (mod.theming): isotipo compacto + nombre en
+          // texto. Es la elección para logos cuadrados o sin wordmark.
+          <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={logoUrl}
+              alt=""
+              className="h-9 w-auto max-w-[72px] shrink-0 rounded-lg object-contain"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[14px] font-bold leading-tight text-white">
+                {orgName}
+              </div>
+            </div>
+          </div>
+        ) : logoUrl ? (
+          // Modo «solo el logo» (default): el logo ES la cabecera — se pinta a
+          // su ancho natural y se quitan el nombre y el subtítulo, que un logo
+          // con wordmark ya lleva dentro.
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={logoUrl}

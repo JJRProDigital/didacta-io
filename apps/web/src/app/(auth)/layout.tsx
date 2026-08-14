@@ -66,7 +66,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           className="relative flex flex-col gap-8 px-6 py-8 text-white sm:px-10 lg:w-1/2 lg:justify-between lg:px-14 lg:py-14"
           style={BRAND_PANEL_STYLE}
         >
-          <div className="flex items-center">
+          <div className="flex items-center gap-3">
             {tenant?.logoUrl ? (
               // Marca del tenant (mod.theming). El src puede ser absoluto o
               // relativo al API same-origin; <img> lo resuelve sin next/image.
@@ -74,13 +74,20 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
               <img
                 src={tenant.logoUrl}
                 alt={tenant.name}
-                className="h-10 w-auto max-w-[220px] object-contain object-left lg:h-14"
+                className={
+                  tenant.logoDisplayMode === 'logo_and_name'
+                    ? 'h-10 w-auto max-w-[96px] object-contain object-left lg:h-12'
+                    : 'h-10 w-auto max-w-[220px] object-contain object-left lg:h-14'
+                }
               />
-            ) : (
+            ) : null}
+            {/* El nombre en texto acompaña al logo solo en modo «logo y
+                nombre»; en «solo el logo» el wordmark ya va dentro. */}
+            {!tenant?.logoUrl || tenant.logoDisplayMode === 'logo_and_name' ? (
               <span className="font-display text-2xl font-extrabold tracking-tight lg:text-3xl">
                 {tenant?.name ?? 'Didacta'}
               </span>
-            )}
+            ) : null}
           </div>
 
           <div className="lg:pb-2">

@@ -50,6 +50,24 @@ export const MAX_SIGNIN_HEADLINE_CHARS = 160;
 export const MAX_SIGNIN_SUBHEADLINE_CHARS = 240;
 
 /**
+ * Cómo se presenta la marca del tenant allí donde aparece (sidebar, panel de
+ * acceso, asistente de bienvenida…).
+ *
+ *  - `logo_only`: el logo sustituye al nombre, a su ancho natural. Es lo que
+ *    quiere un logo horizontal que ya lleva el wordmark dentro — pintarle el
+ *    nombre al lado lo duplica, y encajarlo en un cuadrado lo hace ilegible.
+ *  - `logo_and_name`: logo compacto + nombre en texto. Es lo que quiere un
+ *    isotipo cuadrado.
+ *
+ * El default es `logo_only` porque es el comportamiento que ya tenían el
+ * sidebar y /signin con los logos existentes: el campo añade la elección, no
+ * cambia lo desplegado.
+ */
+export const LOGO_DISPLAY_MODES = ['logo_only', 'logo_and_name'] as const;
+export type LogoDisplayMode = (typeof LOGO_DISPLAY_MODES)[number];
+export const DEFAULT_LOGO_DISPLAY_MODE: LogoDisplayMode = 'logo_only';
+
+/**
  * URLs de branding aceptan:
  *  - `https://...` (URL externa pegada por el admin).
  *  - `/api/v1/...` (endpoint público del backend que sirve el logo subido).
@@ -70,6 +88,7 @@ const safeImageUrl = z
 export const updateThemeSchema = z
   .object({
     logoUrl: safeImageUrl.nullable().optional(),
+    logoDisplayMode: z.enum(LOGO_DISPLAY_MODES).optional(),
     faviconUrl: safeImageUrl.nullable().optional(),
     brandHue: z.number().int().min(0).max(360).optional(),
     brandSaturation: z.number().int().min(0).max(100).optional(),
@@ -119,6 +138,8 @@ export interface ThemeSnapshot {
   logoUrl: string | null;
   /** True si el logo actual fue subido por el uploader del panel. */
   logoUploaded: boolean;
+  /** Cómo se presenta la marca: solo el logo, o logo compacto + nombre. */
+  logoDisplayMode: LogoDisplayMode;
   faviconUrl: string | null;
   brandHue: number;
   brandSaturation: number;

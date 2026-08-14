@@ -1577,6 +1577,11 @@ model ModThemingTenantTheme {
   /// MIME type del logo subido (image/png, image/svg+xml, etc.). Necesario
   /// para servir el blob con el Content-Type correcto desde el endpoint público.
   logoMimeType   String? @map("logo_mime_type")
+  /// Cómo se presenta la marca donde aparece (sidebar, /signin, bienvenida):
+  /// 'logo_only' = el logo sustituye al nombre a su ancho natural (logos
+  /// horizontales con wordmark); 'logo_and_name' = logo compacto + nombre en
+  /// texto (isotipos cuadrados). Default = el comportamiento previo del shell.
+  logoDisplayMode String @default("logo_only") @map("logo_display_mode")
   /// URL del favicon (suele ser cuadrado, 32x32 o 512x512 para PWA).
   faviconUrl     String? @map("favicon_url")
 

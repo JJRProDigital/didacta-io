@@ -20,7 +20,12 @@ import { ApiHttpError } from '@/lib/api-client';
 import { authStorage } from '@/lib/auth-storage';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
 import { markupOr } from '@/lib/i18n/labels';
-import { publishThemeUpdate, themingApi, type TenantTheme } from '@/lib/theming';
+import {
+  publishThemeUpdate,
+  themingApi,
+  type LogoDisplayMode,
+  type TenantTheme,
+} from '@/lib/theming';
 
 const DISPLAY_FONTS = [
   'Sora',
@@ -60,6 +65,7 @@ interface FormState {
   displayFontFamily: string;
   bodyFontFamily: string;
   logoUrl: string;
+  logoDisplayMode: LogoDisplayMode;
   faviconUrl: string;
   customCss: string;
   footerHtml: string;
@@ -74,6 +80,7 @@ function themeToForm(t: TenantTheme): FormState {
     displayFontFamily: t.displayFontFamily,
     bodyFontFamily: t.bodyFontFamily,
     logoUrl: t.logoUrl ?? '',
+    logoDisplayMode: t.logoDisplayMode ?? 'logo_only',
     faviconUrl: t.faviconUrl ?? '',
     customCss: t.customCss ?? '',
     footerHtml: t.footerHtml ?? '',
@@ -135,6 +142,7 @@ export default function BrandingPage() {
         displayFontFamily: form.displayFontFamily,
         bodyFontFamily: form.bodyFontFamily,
         logoUrl: form.logoUrl.trim() || null,
+        logoDisplayMode: form.logoDisplayMode,
         faviconUrl: form.faviconUrl.trim() || null,
         customCss: form.customCss.trim() || null,
         footerHtml: form.footerHtml.trim() || null,
@@ -358,6 +366,51 @@ export default function BrandingPage() {
                   setTheme((th) => th && { ...th, logoUploaded: false, logoUrl: null });
                 }}
               />
+
+              {/* Cómo se presenta la marca donde aparece (sidebar, /signin,
+                  bienvenida): el logo solo a su ancho natural, o compacto con
+                  el nombre al lado. Misma elección que ofrece el asistente. */}
+              <fieldset>
+                <legend className="text-sm font-medium">{t('branding.logoModeLabel')}</legend>
+                <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+                  {(
+                    [
+                      { valor: 'logo_only', titulo: 'logoModeOnly', ayuda: 'logoModeOnlyHint' },
+                      {
+                        valor: 'logo_and_name',
+                        titulo: 'logoModeWithName',
+                        ayuda: 'logoModeWithNameHint',
+                      },
+                    ] as const
+                  ).map((op) => {
+                    const activo = form.logoDisplayMode === op.valor;
+                    return (
+                      <button
+                        key={op.valor}
+                        type="button"
+                        aria-pressed={activo}
+                        onClick={() =>
+                          setForm(
+                            (f) => f && { ...f, logoDisplayMode: op.valor as LogoDisplayMode },
+                          )
+                        }
+                        className={`rounded-lg border p-3 text-left transition-colors ${
+                          activo
+                            ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-500'
+                            : 'border-border bg-surface hover:border-brand-300'
+                        }`}
+                      >
+                        <span className="block text-sm font-semibold">
+                          {t(`branding.${op.titulo}` as never)}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-text-muted">
+                          {t(`branding.${op.ayuda}` as never)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
 
               <div>
                 <Label htmlFor="logoUrl">{t('branding.logoUrlLabel')}</Label>

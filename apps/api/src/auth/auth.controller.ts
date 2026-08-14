@@ -78,6 +78,7 @@ export class AuthController {
         slug: tenant.slug,
         name: tenant.name,
         logoUrl,
+        logoDisplayMode: branding.logoDisplayMode,
         headline: branding.headline,
         subheadline: branding.subheadline,
         brandHue: branding.brandHue,

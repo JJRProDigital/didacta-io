@@ -9,12 +9,15 @@ import {
   ALLOWED_BODY_FONTS,
   ALLOWED_DISPLAY_FONTS,
   ALLOWED_LOGO_MIME_TYPES,
+  DEFAULT_LOGO_DISPLAY_MODE,
   DEFAULT_THEME,
+  LOGO_DISPLAY_MODES,
   MAX_CUSTOM_CSS_BYTES,
   MAX_FOOTER_HTML_BYTES,
   MAX_LOGO_BYTES,
   MAX_SIGNIN_HEADLINE_CHARS,
   MAX_SIGNIN_SUBHEADLINE_CHARS,
+  type LogoDisplayMode,
   type ThemeSnapshot,
   type UpdateThemeDto,
 } from './dto.js';
@@ -88,6 +91,7 @@ export class ThemingService {
       where: { tenantId },
       data: {
         ...(dto.logoUrl !== undefined ? { logoUrl: dto.logoUrl } : {}),
+        ...(dto.logoDisplayMode !== undefined ? { logoDisplayMode: dto.logoDisplayMode } : {}),
         ...(dto.faviconUrl !== undefined ? { faviconUrl: dto.faviconUrl } : {}),
         ...(dto.brandHue !== undefined ? { brandHue: dto.brandHue } : {}),
         ...(dto.brandSaturation !== undefined ? { brandSaturation: dto.brandSaturation } : {}),
@@ -125,6 +129,7 @@ export class ThemingService {
         logoUrl: null,
         logoStorageKey: null,
         logoMimeType: null,
+        logoDisplayMode: DEFAULT_LOGO_DISPLAY_MODE,
         faviconUrl: null,
         brandHue: DEFAULT_THEME.brandHue,
         brandSaturation: DEFAULT_THEME.brandSaturation,
@@ -340,6 +345,7 @@ export class ThemingService {
     tenantId: string;
     logoUrl: string | null;
     logoStorageKey: string | null;
+    logoDisplayMode: string;
     faviconUrl: string | null;
     brandHue: number;
     brandSaturation: number;
@@ -355,6 +361,12 @@ export class ThemingService {
       tenantId: row.tenantId,
       logoUrl: row.logoUrl,
       logoUploaded: row.logoStorageKey !== null,
+      // La columna es texto libre en la base: un valor que no esté en la
+      // whitelist (edición a mano, versión vieja) cae al default en vez de
+      // propagar un modo que el front no sabe pintar.
+      logoDisplayMode: LOGO_DISPLAY_MODES.includes(row.logoDisplayMode as LogoDisplayMode)
+        ? (row.logoDisplayMode as LogoDisplayMode)
+        : DEFAULT_LOGO_DISPLAY_MODE,
       faviconUrl: row.faviconUrl,
       brandHue: row.brandHue,
       brandSaturation: row.brandSaturation,

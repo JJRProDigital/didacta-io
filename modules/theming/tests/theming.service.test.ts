@@ -26,6 +26,7 @@ interface ThemeRow {
   logoUrl: string | null;
   logoStorageKey: string | null;
   logoMimeType: string | null;
+  logoDisplayMode: string;
   faviconUrl: string | null;
   brandHue: number;
   brandSaturation: number;
@@ -53,6 +54,7 @@ function makeFakePrisma() {
           logoUrl: null,
           logoStorageKey: null,
           logoMimeType: null,
+          logoDisplayMode: 'logo_only',
           faviconUrl: null,
           brandHue: args.data.brandHue ?? DEFAULT_THEME.brandHue,
           brandSaturation: args.data.brandSaturation ?? DEFAULT_THEME.brandSaturation,
@@ -282,6 +284,35 @@ describe('ThemingService.update', () => {
     await service.update(tenant, { customCss: 'body { color: red; }' });
     const cleared = await service.update(tenant, { customCss: null });
     expect(cleared.customCss).toBeNull();
+  });
+
+  it('persiste logoDisplayMode y lo devuelve en el snapshot', async () => {
+    const service = new ThemingService(makeFakePrisma() as never, fakeCtx);
+    const updated = await service.update(tenant, { logoDisplayMode: 'logo_and_name' });
+    expect(updated.logoDisplayMode).toBe('logo_and_name');
+    // Y un getOrCreate posterior lo conserva.
+    const again = await service.getOrCreate(tenant);
+    expect(again.logoDisplayMode).toBe('logo_and_name');
+  });
+
+  it('un logoDisplayMode desconocido en la base cae al default, no al front', async () => {
+    const prisma = makeFakePrisma();
+    const service = new ThemingService(prisma as never, fakeCtx);
+    await service.getOrCreate(tenant);
+    // Simula una edición a mano de la columna (es texto libre en la base).
+    await prisma.modThemingTenantTheme.update({
+      where: { tenantId: tenant },
+      data: { logoDisplayMode: 'lo-que-sea' },
+    });
+    const snapshot = await service.getOrCreate(tenant);
+    expect(snapshot.logoDisplayMode).toBe('logo_only');
+  });
+
+  it('reset devuelve logoDisplayMode al default', async () => {
+    const service = new ThemingService(makeFakePrisma() as never, fakeCtx);
+    await service.update(tenant, { logoDisplayMode: 'logo_and_name' });
+    const reseted = await service.reset(tenant);
+    expect(reseted.logoDisplayMode).toBe('logo_only');
   });
 
   it('actualiza display y body fonts juntos sin error', async () => {

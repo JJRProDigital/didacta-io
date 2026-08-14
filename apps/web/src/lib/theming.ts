@@ -20,11 +20,19 @@ import { apiFetch } from './api-client';
 
 const CACHE_KEY = 'didacta.theme.v1';
 
+/**
+ * Cómo se presenta la marca del tenant donde aparece (sidebar, /signin,
+ * bienvenida): el logo solo a su ancho natural (logos horizontales con
+ * wordmark) o logo compacto + nombre en texto (isotipos cuadrados).
+ */
+export type LogoDisplayMode = 'logo_only' | 'logo_and_name';
+
 export interface TenantTheme {
   tenantId: string;
   logoUrl: string | null;
   /** True si el logo se subió al storage del tenant (vs URL externa). */
   logoUploaded: boolean;
+  logoDisplayMode: LogoDisplayMode;
   faviconUrl: string | null;
   brandHue: number;
   brandSaturation: number;
@@ -40,6 +48,7 @@ export interface TenantTheme {
 
 export interface UpdateThemeInput {
   logoUrl?: string | null;
+  logoDisplayMode?: LogoDisplayMode;
   faviconUrl?: string | null;
   brandHue?: number;
   brandSaturation?: number;

@@ -240,6 +240,22 @@ describe('guard anti-huérfanas del sidebar', () => {
     ).toEqual([]);
   });
 
+  it('todo destino del asistente de bienvenida es una ruta que existe', async () => {
+    // El primer asistente enlazó /admin/cursos y /admin/billing — ninguna de
+    // las dos existió jamás como ruta, y los dos 404 llegaron a producción
+    // porque nada lo comprobaba. Los destinos viven en lib/academy.ts para
+    // que este test los importe y el fallo sea de CI, no de un cliente.
+    const { DESTINOS } = await import('./academy');
+    const routeSet = new Set(routes);
+    const rotos = Object.entries(DESTINOS)
+      .map(([paso, destino]) => [paso, destino.split('?')[0]!] as const)
+      .filter(([, path]) => !routeSet.has(path));
+    expect(
+      rotos.map(([paso, path]) => `${paso} → ${path}`),
+      `Destinos del asistente /bienvenida que apuntan a rutas SIN page.tsx (404):`,
+    ).toEqual([]);
+  });
+
   it('documenta los gaps conocidos (páginas sin punto de entrada todavía)', () => {
     const gaps = Object.entries(ALLOWLIST).filter(([, v]) => v.kind === 'knownGap');
     // No falla: solo deja constancia. Si la lista crece, revísala.

@@ -26,6 +26,8 @@ export interface TenantPublicInfo {
   slug: string;
   name: string;
   logoUrl: string | null;
+  /** Cómo se presenta la marca: solo el logo, o logo compacto + nombre. */
+  logoDisplayMode?: 'logo_only' | 'logo_and_name';
   /** Copy propio del tenant para el panel de acceso (mod.theming). */
   headline?: string | null;
   subheadline?: string | null;

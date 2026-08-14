@@ -42,6 +42,12 @@ export interface SigninBrandingContext {
    */
   brandHue: number;
   brandSaturation: number;
+  /**
+   * Cómo se presenta la marca: 'logo_only' (el logo sustituye al nombre, a su
+   * ancho natural) o 'logo_and_name' (logo compacto + nombre). Lo elige el
+   * admin en mod.theming; las pantallas sin sesión lo necesitan aquí.
+   */
+  logoDisplayMode: 'logo_only' | 'logo_and_name';
   stats: SigninBrandingStats;
   /**
    * True si el tenant tiene activada la página pública de membresía (/unete).
@@ -60,6 +66,7 @@ const EMPTY: SigninBrandingContext = {
   subheadline: null,
   brandHue: DEFAULT_BRAND_HUE,
   brandSaturation: DEFAULT_BRAND_SATURATION,
+  logoDisplayMode: 'logo_only',
   stats: { activeMembers: 0, publishedCourses: 0 },
   membershipPageActive: false,
 };
@@ -85,6 +92,7 @@ export class SigninContextService {
             signinSubheadline: true,
             brandHue: true,
             brandSaturation: true,
+            logoDisplayMode: true,
           },
         }),
         this.prisma.user.count({ where: { tenantId, status: 'ACTIVE', deletedAt: null } }),
@@ -101,6 +109,7 @@ export class SigninContextService {
         subheadline: theme?.signinSubheadline ?? null,
         brandHue: theme?.brandHue ?? DEFAULT_BRAND_HUE,
         brandSaturation: theme?.brandSaturation ?? DEFAULT_BRAND_SATURATION,
+        logoDisplayMode: theme?.logoDisplayMode === 'logo_and_name' ? 'logo_and_name' : 'logo_only',
         stats: { activeMembers, publishedCourses },
         membershipPageActive: membership?.active ?? false,
       };

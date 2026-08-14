@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ApiHttpError } from '@/lib/api-client';
+import { concederPaseDeBienvenida } from '@/lib/academy';
 import { coursesApi, type Course } from '@/lib/courses';
 
 function slugify(value: string): string {
@@ -124,6 +125,11 @@ export function PasoCurso({ onHecho }: Props) {
             target="_blank"
             rel="noopener"
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline"
+            onClick={() => {
+              // Sin el pase, el gate del shell devuelve la pestaña nueva a
+              // /bienvenida (el asistente aún no está completado).
+              concederPaseDeBienvenida();
+            }}
           >
             {t('cursoAbrirEditor')}
             <Icon name="arrow-right" size={14} />

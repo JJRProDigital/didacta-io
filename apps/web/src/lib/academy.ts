@@ -54,6 +54,72 @@ export const PASOS_CONTABLES = ONBOARDING_STEPS.length - 2;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 
 /**
+ * Adónde llevan los pasos que se resuelven en otra pantalla del panel, y los
+ * pendientes del resumen. Vive aquí (no en la página) para que un test pueda
+ * afirmar que cada destino es una RUTA QUE EXISTE: el primer asistente enlazaba
+ * `/admin/cursos` (nunca existió) y `/admin/billing` (tampoco), y ambos 404
+ * llegaron a producción porque nada los comprobaba.
+ *
+ * - `cobros`: la cuenta de Stripe del tenant se pega en Configuración →
+ *   pestaña «Pagos» (`StripeSettingsCard`). `/admin/billing/products` es el
+ *   paso SIGUIENTE (vincular cursos a precios), no el primero.
+ * - `correo`: enviar con remitente propio es el SMTP de Configuración →
+ *   «Notificaciones». `/admin/emails` son las plantillas, otra cosa.
+ */
+export const DESTINOS: Partial<Record<OnboardingStep, string>> = {
+  curso: '/formador/cursos',
+  alumnos: '/admin/usuarios/invitar',
+  cobros: '/admin/configuracion?tab=pagos',
+  correo: '/admin/configuracion?tab=notifications',
+};
+
+/**
+ * El pase del asistente.
+ *
+ * El gate del shell autenticado manda a todo admin con el asistente sin
+ * completar a `/bienvenida` — es lo que lo hace bloqueante. Pero los enlaces
+ * DEL PROPIO asistente («Abrir la configuración de cobros», el editor del
+ * curso, los pendientes del resumen) abren pestaña nueva… que pasa por ese
+ * mismo gate y volvía rebotada al asistente: sus enlaces eran imposibles de
+ * usar. En producción se vio como «configurar el correo me llevó a "Listo"».
+ *
+ * El pase vive en localStorage (compartido entre pestañas, a diferencia de
+ * sessionStorage) y caduca solo: media hora cubre de sobra configurar Stripe
+ * o el SMTP sin dejar la puerta abierta para siempre. Completar el asistente
+ * lo retira.
+ */
+const PASE_KEY = 'didacta.bienvenida.pase';
+const PASE_TTL_MS = 30 * 60 * 1000;
+
+export function concederPaseDeBienvenida(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(PASE_KEY, String(Date.now()));
+  } catch {
+    // Sin localStorage el enlace rebotará al asistente: peor UX, no un fallo.
+  }
+}
+
+export function retirarPaseDeBienvenida(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(PASE_KEY);
+  } catch {
+    // Ídem.
+  }
+}
+
+export function hayPaseDeBienvenida(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const ts = Number(localStorage.getItem(PASE_KEY));
+    return Number.isFinite(ts) && ts > 0 && Date.now() - ts < PASE_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Los pasos que NO se pueden saltar.
  *
  * Decisión de producto: el asistente es bloqueante, pero sólo se exige lo que
