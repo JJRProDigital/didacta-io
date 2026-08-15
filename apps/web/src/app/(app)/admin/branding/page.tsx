@@ -479,16 +479,39 @@ export default function BrandingPage() {
                 />
                 <p className="mt-1 text-xs text-text-subtle">{t('branding.logoUrlHint')}</p>
               </div>
+              {/* Favicon: subida propia (feedback de onboarding — «no vi la
+                  posibilidad de subir el favicon») + la URL externa de siempre
+                  como alternativa. */}
+              <FaviconUploader
+                currentFaviconUrl={form.faviconUrl}
+                isUploaded={theme?.faviconUploaded ?? false}
+                logoUploaded={theme?.logoUploaded ?? false}
+                logoUrl={form.logoUrl}
+                onUploaded={(url) => {
+                  setForm((f) => f && { ...f, faviconUrl: url });
+                  setTheme((th) => th && { ...th, faviconUploaded: true, faviconUrl: url });
+                }}
+                onRemoved={() => {
+                  setForm((f) => f && { ...f, faviconUrl: '' });
+                  setTheme((th) => th && { ...th, faviconUploaded: false, faviconUrl: null });
+                }}
+              />
+
               <div>
                 <Label htmlFor="faviconUrl">{t('branding.faviconUrlLabel')}</Label>
                 <Input
                   id="faviconUrl"
-                  type="url"
+                  /* type="text" (NO "url"): mismo motivo que logoUrl — el
+                     favicon subido se sirve desde un endpoint RELATIVO y
+                     type="url" bloquearía el submit ENTERO del form. */
+                  type="text"
+                  inputMode="url"
                   placeholder={t('branding.faviconUrlPlaceholder')}
                   value={form.faviconUrl}
                   onChange={(e) => setForm((f) => f && { ...f, faviconUrl: e.target.value })}
                   className="mt-1.5"
                 />
+                <p className="mt-1 text-xs text-text-subtle">{t('branding.faviconUrlHint')}</p>
               </div>
             </CardContent>
           </Card>
@@ -851,6 +874,188 @@ function LogoUploader({
           className="sr-only"
         />
       </label>
+
+      {error ? (
+        <div className="rounded-lg border border-danger-100 bg-danger-50 p-3 text-sm text-danger-700">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const MAX_FAVICON_BYTES = 1 * 1024 * 1024;
+
+/**
+ * Hermano pequeño de `LogoUploader` para el favicon: mismo contrato con la
+ * página (URL + flag `isUploaded` + callbacks), límite de 1 MB y un atajo
+ * «usar el logo como favicon» que copia el logo subido (el backend lo
+ * redimensiona a icono). El atajo solo aparece con logo EN STORAGE: una URL
+ * externa no es fetcheable desde aquí (CORS) y el navegador ya la tiene.
+ */
+function FaviconUploader({
+  currentFaviconUrl,
+  isUploaded,
+  logoUploaded,
+  logoUrl,
+  onUploaded,
+  onRemoved,
+}: {
+  currentFaviconUrl: string;
+  isUploaded: boolean;
+  logoUploaded: boolean;
+  logoUrl: string;
+  onUploaded: (url: string) => void;
+  onRemoved: () => void;
+}) {
+  const t = useTranslations('adminMarca');
+  const tErrors = useTranslations('errors');
+  const [busy, setBusy] = useState<'upload' | 'remove' | 'copy' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function subirBlob(data: string, filename: string, contentType: string) {
+    const token = authStorage.getAccessToken();
+    if (!token) return;
+    const updated = await themingApi.uploadFavicon(token, { data, filename, contentType });
+    publishThemeUpdate(updated);
+    if (updated.faviconUrl) onUploaded(updated.faviconUrl);
+  }
+
+  async function handleUpload(file: File) {
+    setError(null);
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setError(t('branding.uploadBadType'));
+      return;
+    }
+    if (file.size > MAX_FAVICON_BYTES) {
+      setError(t('branding.faviconTooBig'));
+      return;
+    }
+    setBusy('upload');
+    try {
+      const buf = await file.arrayBuffer();
+      await subirBlob(bufferToBase64(buf), file.name, file.type);
+    } catch (e) {
+      setError(
+        e instanceof ApiHttpError ? apiErrorMessage(e, tErrors) : t('branding.faviconUploadError'),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Copia el logo subido como favicon: fetch same-origin + re-upload. */
+  async function handleUseLogo() {
+    if (!logoUrl) return;
+    setError(null);
+    setBusy('copy');
+    try {
+      const res = await fetch(logoUrl);
+      if (!res.ok) throw new Error(`logo fetch ${res.status}`);
+      const blob = await res.blob();
+      const contentType = blob.type || 'image/png';
+      if (!ALLOWED_TYPES.includes(contentType)) {
+        setError(t('branding.uploadBadType'));
+        return;
+      }
+      const buf = await blob.arrayBuffer();
+      await subirBlob(bufferToBase64(buf), 'logo-como-favicon', contentType);
+    } catch (e) {
+      setError(
+        e instanceof ApiHttpError ? apiErrorMessage(e, tErrors) : t('branding.faviconUploadError'),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleRemove() {
+    if (!confirm(t('branding.faviconRemoveConfirm'))) return;
+    const token = authStorage.getAccessToken();
+    if (!token) return;
+    setBusy('remove');
+    setError(null);
+    try {
+      const updated = await themingApi.removeFavicon(token);
+      publishThemeUpdate(updated);
+      onRemoved();
+    } catch (e) {
+      setError(
+        e instanceof ApiHttpError ? apiErrorMessage(e, tErrors) : t('branding.faviconRemoveError'),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const showPreview = isUploaded && currentFaviconUrl;
+
+  return (
+    <div className="space-y-3">
+      <Label>{t('branding.faviconUploadedLabel')}</Label>
+      {showPreview ? (
+        <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-surface-2 p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={currentFaviconUrl}
+            alt={t('branding.faviconUploadedAlt')}
+            className="h-8 w-8 rounded object-contain"
+          />
+          <div className="flex flex-1 items-center justify-between gap-2">
+            <p className="text-xs text-text-muted">{t('branding.faviconUploadedHint')}</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleRemove}
+              disabled={busy !== null}
+            >
+              {busy === 'remove' ? t('branding.removing') : t('branding.removeButton')}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-stretch gap-3">
+        <label
+          className={
+            busy === 'upload'
+              ? 'block flex-1 cursor-wait rounded-lg border-2 border-dashed border-border-strong bg-surface-2 p-4 text-center opacity-60'
+              : 'block flex-1 cursor-pointer rounded-lg border-2 border-dashed border-border-strong bg-surface-2 p-4 text-center transition-colors hover:border-brand-300 hover:bg-brand-50'
+          }
+        >
+          <p className="text-sm font-semibold text-text">
+            {busy === 'upload'
+              ? t('branding.uploading')
+              : showPreview
+                ? t('branding.faviconReplaceCta')
+                : t('branding.faviconUploadCta')}
+          </p>
+          <p className="mt-1 text-xs text-text-muted">{t('branding.faviconUploadHint')}</p>
+          <input
+            type="file"
+            accept={ALLOWED_TYPES.join(',')}
+            disabled={busy !== null}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleUpload(file);
+              e.target.value = '';
+            }}
+            className="sr-only"
+          />
+        </label>
+        {logoUploaded && logoUrl ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="self-center"
+            disabled={busy !== null}
+            onClick={() => void handleUseLogo()}
+          >
+            {busy === 'copy' ? t('branding.faviconUseLogoBusy') : t('branding.faviconUseLogo')}
+          </Button>
+        ) : null}
+      </div>
 
       {error ? (
         <div className="rounded-lg border border-danger-100 bg-danger-50 p-3 text-sm text-danger-700">

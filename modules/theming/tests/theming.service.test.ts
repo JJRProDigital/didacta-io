@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_THEME,
   MAX_CUSTOM_CSS_BYTES,
+  MAX_FAVICON_BYTES,
   MAX_FOOTER_HTML_BYTES,
   MAX_LOGO_BYTES,
   MAX_SIGNIN_HEADLINE_CHARS,
@@ -10,12 +11,16 @@ import {
 import {
   CustomCssTooLargeError,
   CustomCssUnsafeError,
+  EmptyFaviconError,
   EmptyLogoError,
+  FaviconNotFoundError,
+  FaviconTooLargeError,
   FooterHtmlTooLargeError,
   InvalidHueError,
   InvalidSaturationError,
   LogoTooLargeError,
   SigninCopyTooLongError,
+  UnsupportedFaviconTypeError,
   UnsupportedFontError,
   UnsupportedLogoTypeError,
 } from '../src/errors.js';
@@ -28,6 +33,8 @@ interface ThemeRow {
   logoMimeType: string | null;
   logoDisplayMode: string;
   faviconUrl: string | null;
+  faviconStorageKey: string | null;
+  faviconMimeType: string | null;
   brandHue: number;
   brandSaturation: number;
   displayFontFamily: string;
@@ -56,6 +63,8 @@ function makeFakePrisma() {
           logoMimeType: null,
           logoDisplayMode: 'logo_only',
           faviconUrl: null,
+          faviconStorageKey: null,
+          faviconMimeType: null,
           brandHue: args.data.brandHue ?? DEFAULT_THEME.brandHue,
           brandSaturation: args.data.brandSaturation ?? DEFAULT_THEME.brandSaturation,
           displayFontFamily: args.data.displayFontFamily ?? DEFAULT_THEME.displayFontFamily,
@@ -485,6 +494,165 @@ describe('ThemingService.uploadLogo', () => {
     const cleared = await service.removeLogo(tenant);
     expect(cleared.logoUploaded).toBe(false);
     expect(cleared.logoUrl).toBeNull();
+    expect(storage.blobs.size).toBe(0);
+  });
+});
+
+describe('ThemingService.uploadFavicon', () => {
+  const tinyPngBase64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  it('sube el blob al storage y setea faviconUrl al endpoint público + faviconUploaded', async () => {
+    const prisma = makeFakePrisma();
+    const storage = makeFakeStorage();
+    const service = new ThemingService(prisma as never, makeFakeCtx(storage));
+
+    const snap = await service.uploadFavicon(tenant, {
+      data: tinyPngBase64,
+      filename: 'favicon.png',
+      contentType: 'image/png',
+    });
+
+    expect(snap.faviconUploaded).toBe(true);
+    expect(snap.faviconUrl).toMatch(
+      /^\/api\/v1\/modules\/theming\/tenants\/[\w-]+\/favicon\?v=\d+$/,
+    );
+    expect(storage.blobs.has(`tenants/${tenant}/branding/favicon`)).toBe(true);
+    // El logo no se toca: son blobs y columnas independientes.
+    expect(snap.logoUploaded).toBe(false);
+  });
+
+  it('pasa por uploadImage a 128px y en PNG (icono de pestaña, no cabecera)', async () => {
+    const prisma = makeFakePrisma();
+    const storage = makeFakeStorage();
+    const spy = vi.spyOn(storage, 'uploadImage');
+    const service = new ThemingService(prisma as never, makeFakeCtx(storage));
+
+    await service.uploadFavicon(tenant, {
+      data: tinyPngBase64,
+      filename: 'favicon.png',
+      contentType: 'image/png',
+    });
+
+    expect(spy).toHaveBeenCalledWith(expect.any(String), expect.any(Buffer), 'image/png', {
+      maxWidth: 128,
+      format: 'png',
+    });
+  });
+
+  it('si el core recomprime, persiste la key y el MIME REALES (getFaviconBlob los encuentra)', async () => {
+    const prisma = makeFakePrisma();
+    const storage = makeFakeStorage({ recomprime: true });
+    const service = new ThemingService(prisma as never, makeFakeCtx(storage));
+
+    await service.uploadFavicon(tenant, {
+      data: tinyPngBase64,
+      filename: 'favicon.png',
+      contentType: 'image/png',
+    });
+
+    expect(storage.blobs.has(`tenants/${tenant}/branding/favicon.webp`)).toBe(true);
+    const { mimeType } = await service.getFaviconBlob(tenant);
+    expect(mimeType).toBe('image/webp');
+  });
+
+  it('rechaza un contentType no permitido con UnsupportedFaviconTypeError', async () => {
+    const prisma = makeFakePrisma();
+    const service = new ThemingService(prisma as never, makeFakeCtx());
+    await expect(
+      service.uploadFavicon(tenant, {
+        data: tinyPngBase64,
+        filename: 'favicon.ico',
+        contentType: 'image/x-icon',
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedFaviconTypeError);
+  });
+
+  it('rechaza un favicon que excede MAX_FAVICON_BYTES con FaviconTooLargeError', async () => {
+    const prisma = makeFakePrisma();
+    const storage = makeFakeStorage();
+    const service = new ThemingService(prisma as never, makeFakeCtx(storage));
+    const oversized = Buffer.alloc(MAX_FAVICON_BYTES + 1, 0).toString('base64');
+    await expect(
+      service.uploadFavicon(tenant, {
+        data: oversized,
+        filename: 'huge.png',
+        contentType: 'image/png',
+      }),
+    ).rejects.toBeInstanceOf(FaviconTooLargeError);
+    expect(storage.calls.upload).toBe(0);
+  });
+
+  it('rechaza data vacía con EmptyFaviconError', async () => {
+    const prisma = makeFakePrisma();
+    const service = new ThemingService(prisma as never, makeFakeCtx());
+    await expect(
+      service.uploadFavicon(tenant, {
+        data: '====',
+        filename: 'empty.png',
+        contentType: 'image/png',
+      }),
+    ).rejects.toBeInstanceOf(EmptyFaviconError);
+  });
+
+  it('re-subir reemplaza el blob anterior (delete + upload, sin huérfanos)', async () => {
+    const prisma = makeFakePrisma();
+    const storage = makeFakeStorage();
+    const service = new ThemingService(prisma as never, makeFakeCtx(storage));
+
+    await service.uploadFavicon(tenant, {
+      data: tinyPngBase64,
+      filename: 'favicon.png',
+      contentType: 'image/png',
+    });
+    const second = await service.uploadFavicon(tenant, {
+      data: tinyPngBase64,
+      filename: 'favicon2.webp',
+      contentType: 'image/webp',
+    });
+
+    expect(second.faviconUploaded).toBe(true);
+    expect(storage.blobs.size).toBe(1);
+    expect(storage.calls.delete).toBe(1);
+    expect(storage.calls.upload).toBe(2);
+  });
+
+  it('getFaviconBlob lanza FaviconNotFoundError sin favicon subido', async () => {
+    const prisma = makeFakePrisma();
+    const service = new ThemingService(prisma as never, makeFakeCtx());
+    await service.getOrCreate(tenant);
+    await expect(service.getFaviconBlob(tenant)).rejects.toBeInstanceOf(FaviconNotFoundError);
+  });
+
+  it('removeFavicon limpia blob + columnas y deja faviconUploaded en false', async () => {
+    const prisma = makeFakePrisma();
+    const storage = makeFakeStorage();
+    const service = new ThemingService(prisma as never, makeFakeCtx(storage));
+
+    await service.uploadFavicon(tenant, {
+      data: tinyPngBase64,
+      filename: 'favicon.png',
+      contentType: 'image/png',
+    });
+    const cleared = await service.removeFavicon(tenant);
+    expect(cleared.faviconUploaded).toBe(false);
+    expect(cleared.faviconUrl).toBeNull();
+    expect(storage.blobs.size).toBe(0);
+  });
+
+  it('reset borra también el favicon subido (blob incluido)', async () => {
+    const prisma = makeFakePrisma();
+    const storage = makeFakeStorage();
+    const service = new ThemingService(prisma as never, makeFakeCtx(storage));
+
+    await service.uploadFavicon(tenant, {
+      data: tinyPngBase64,
+      filename: 'favicon.png',
+      contentType: 'image/png',
+    });
+    const fresh = await service.reset(tenant);
+    expect(fresh.faviconUploaded).toBe(false);
+    expect(fresh.faviconUrl).toBeNull();
     expect(storage.blobs.size).toBe(0);
   });
 });

@@ -19,10 +19,13 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
+  FaviconNotFoundError,
   LogoNotFoundError,
   updateThemeSchema,
+  uploadFaviconSchema,
   uploadLogoSchema,
   type UpdateThemeDto,
+  type UploadFaviconDto,
   type UploadLogoDto,
 } from '@didacta/mod-theming';
 import { LicenseService, LICENSE_CAPABILITIES } from '@didacta/license-sdk';
@@ -171,6 +174,71 @@ export class ThemingController {
     } catch (e) {
       if (e instanceof LogoNotFoundError) {
         void reply.status(404).send({ error: 'logo_not_found' });
+        return;
+      }
+      throw e;
+    }
+  }
+
+  @Post('me/favicon')
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      'Sube un favicon (PNG/JPG/SVG/WebP, max 1 MB) al storage del tenant y actualiza el theme. Solo administradores.',
+  })
+  async uploadFavicon(
+    @CurrentUser() user: SessionClaims | undefined,
+    @Body(new ZodValidationPipe(uploadFaviconSchema)) dto: UploadFaviconDto,
+  ) {
+    if (!user) throw new UnauthorizedException();
+    if (!user.roles.some((r) => ADMIN_ROLES.has(r))) {
+      throw new ForbiddenException({
+        message: 'Solo administradores pueden subir el favicon.',
+        code: 'THEMING_FAVICON_UPLOAD_FORBIDDEN',
+      });
+    }
+    return this.registry.getThemingService().uploadFavicon(user.tenantId, dto);
+  }
+
+  @Delete('me/favicon')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Elimina el favicon subido del tenant (limpia blob + columnas). Solo administradores.',
+  })
+  async removeFavicon(@CurrentUser() user: SessionClaims | undefined) {
+    if (!user) throw new UnauthorizedException();
+    if (!user.roles.some((r) => ADMIN_ROLES.has(r))) {
+      throw new ForbiddenException({
+        message: 'Solo administradores pueden eliminar el favicon.',
+        code: 'THEMING_FAVICON_DELETE_FORBIDDEN',
+      });
+    }
+    return this.registry.getThemingService().removeFavicon(user.tenantId);
+  }
+
+  @Get('tenants/:tenantId/favicon')
+  @Public()
+  @ApiOperation({
+    summary:
+      'Sirve el favicon subido del tenant. Público como el logo: se pinta también en pantallas sin sesión.',
+  })
+  async getPublicFavicon(
+    @Param('tenantId') tenantId: string,
+    @Res({ passthrough: false }) reply: FastifyReply,
+  ) {
+    try {
+      // RLS F2: ruta @Public sin ALS del middleware — el tenant viene en el
+      // path y el blob se lee bajo su contexto.
+      const { buffer, mimeType } = await runAsTenant(tenantId, () =>
+        this.registry.getThemingService().getFaviconBlob(tenantId),
+      );
+      void reply
+        .header('Content-Type', mimeType)
+        .header('Cache-Control', 'public, max-age=300, must-revalidate')
+        .send(buffer);
+    } catch (e) {
+      if (e instanceof FaviconNotFoundError) {
+        void reply.status(404).send({ error: 'favicon_not_found' });
         return;
       }
       throw e;

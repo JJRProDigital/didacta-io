@@ -8,6 +8,7 @@ function makeTheme(overrides: Partial<TenantTheme> = {}): TenantTheme {
     logoUploaded: false,
     logoDisplayMode: 'logo_only',
     faviconUrl: null,
+    faviconUploaded: false,
     brandHue: 213,
     brandSaturation: 70,
     displayFontFamily: 'Sora',

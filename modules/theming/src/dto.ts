@@ -125,6 +125,26 @@ export const uploadLogoSchema = z.object({
 
 export type UploadLogoDto = z.infer<typeof uploadLogoSchema>;
 
+/**
+ * Favicon: mismos tipos que el logo. Sin ICO a propósito — el optimizador de
+ * imágenes del core (sharp) no lo lee, y un PNG/SVG funciona como favicon en
+ * cualquier navegador de este siglo.
+ */
+export const ALLOWED_FAVICON_MIME_TYPES = ALLOWED_LOGO_MIME_TYPES;
+
+/** 1 MB máximo. Un favicon real rara vez pasa de 50 KB. */
+export const MAX_FAVICON_BYTES = 1 * 1024 * 1024;
+
+export const uploadFaviconSchema = z.object({
+  /** Contenido del archivo en base64 (sin el prefijo data:). */
+  data: z.string().min(1),
+  /** Nombre original del archivo, solo para auditoría / extensión. */
+  filename: z.string().min(1).max(256),
+  contentType: z.enum(ALLOWED_FAVICON_MIME_TYPES),
+});
+
+export type UploadFaviconDto = z.infer<typeof uploadFaviconSchema>;
+
 export type UpdateThemeDto = z.infer<typeof updateThemeSchema>;
 
 export type DisplayFont = (typeof ALLOWED_DISPLAY_FONTS)[number];
@@ -141,6 +161,8 @@ export interface ThemeSnapshot {
   /** Cómo se presenta la marca: solo el logo, o logo compacto + nombre. */
   logoDisplayMode: LogoDisplayMode;
   faviconUrl: string | null;
+  /** True si el favicon actual fue subido por el uploader del panel. */
+  faviconUploaded: boolean;
   brandHue: number;
   brandSaturation: number;
   displayFontFamily: string;

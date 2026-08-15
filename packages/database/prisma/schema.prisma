@@ -1583,7 +1583,15 @@ model ModThemingTenantTheme {
   /// texto (isotipos cuadrados). Default = el comportamiento previo del shell.
   logoDisplayMode String @default("logo_only") @map("logo_display_mode")
   /// URL del favicon (suele ser cuadrado, 32x32 o 512x512 para PWA).
-  faviconUrl     String? @map("favicon_url")
+  /// Si `faviconStorageKey` está set, apunta al endpoint público del backend;
+  /// si no, puede ser una URL externa pegada por el admin.
+  faviconUrl        String? @map("favicon_url")
+  /// Key del blob en el StorageService cuando el favicon se subió vía el
+  /// uploader del panel de branding. NULL si el admin pegó una URL externa.
+  faviconStorageKey String? @map("favicon_storage_key")
+  /// MIME type del favicon subido, para servir el blob con el Content-Type
+  /// correcto desde el endpoint público.
+  faviconMimeType   String? @map("favicon_mime_type")
 
   /// Hue HSL del color primario (0-360). Default 213 (azul confianza Didacta).
   brandHue        Int @default(213) @map("brand_hue")

@@ -133,3 +133,35 @@ export class EmptyLogoError extends ThemingError {
     super('THEMING_EMPTY_LOGO', 'El archivo del logo está vacío o el base64 es inválido.');
   }
 }
+
+export class FaviconTooLargeError extends ThemingError {
+  constructor(maxBytes: number) {
+    // El límite ya viaja formateado como texto: ICU no debe reformatearlo (ver
+    // nota de String() en los demás límites numéricos).
+    const maxMb = (maxBytes / 1024 / 1024).toFixed(1);
+    super('THEMING_FAVICON_TOO_LARGE', `El favicon excede el máximo permitido de ${maxMb} MB.`, {
+      detail: maxMb,
+    });
+  }
+}
+
+export class FaviconNotFoundError extends ThemingError {
+  constructor() {
+    super('THEMING_FAVICON_NOT_FOUND', 'Este tenant no tiene un favicon subido.');
+  }
+}
+
+export class UnsupportedFaviconTypeError extends ThemingError {
+  constructor(contentType: string, allowed: readonly string[]) {
+    super(
+      'THEMING_UNSUPPORTED_FAVICON_TYPE',
+      `El tipo "${contentType}" no está permitido para el favicon. Permitidos: ${allowed.join(', ')}.`,
+    );
+  }
+}
+
+export class EmptyFaviconError extends ThemingError {
+  constructor() {
+    super('THEMING_EMPTY_FAVICON', 'El archivo del favicon está vacío o el base64 es inválido.');
+  }
+}

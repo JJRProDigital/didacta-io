@@ -8,11 +8,13 @@ import type { PrismaClient } from '@didacta/database';
 import {
   ALLOWED_BODY_FONTS,
   ALLOWED_DISPLAY_FONTS,
+  ALLOWED_FAVICON_MIME_TYPES,
   ALLOWED_LOGO_MIME_TYPES,
   DEFAULT_LOGO_DISPLAY_MODE,
   DEFAULT_THEME,
   LOGO_DISPLAY_MODES,
   MAX_CUSTOM_CSS_BYTES,
+  MAX_FAVICON_BYTES,
   MAX_FOOTER_HTML_BYTES,
   MAX_LOGO_BYTES,
   MAX_SIGNIN_HEADLINE_CHARS,
@@ -24,13 +26,17 @@ import {
 import {
   CustomCssTooLargeError,
   CustomCssUnsafeError,
+  EmptyFaviconError,
   EmptyLogoError,
+  FaviconNotFoundError,
+  FaviconTooLargeError,
   FooterHtmlTooLargeError,
   InvalidHueError,
   InvalidSaturationError,
   LogoNotFoundError,
   LogoTooLargeError,
   SigninCopyTooLongError,
+  UnsupportedFaviconTypeError,
   UnsupportedFontError,
   UnsupportedLogoTypeError,
 } from './errors.js';
@@ -123,6 +129,11 @@ export class ThemingService {
     if (current.logoUploaded) {
       await this.deleteLogoBlob(tenantId);
     }
+    if (current.faviconUploaded) {
+      await this.deleteFaviconBlob(tenantId).catch(() => {
+        // Best-effort: si el blob ya no existe en storage, seguimos.
+      });
+    }
     const updated = await this.prisma.modThemingTenantTheme.update({
       where: { tenantId },
       data: {
@@ -131,6 +142,8 @@ export class ThemingService {
         logoMimeType: null,
         logoDisplayMode: DEFAULT_LOGO_DISPLAY_MODE,
         faviconUrl: null,
+        faviconStorageKey: null,
+        faviconMimeType: null,
         brandHue: DEFAULT_THEME.brandHue,
         brandSaturation: DEFAULT_THEME.brandSaturation,
         displayFontFamily: DEFAULT_THEME.displayFontFamily,
@@ -288,6 +301,124 @@ export class ThemingService {
     }
   }
 
+  /**
+   * Sube un favicon al storage y lo asocia al theme. Espejo de `uploadLogo`
+   * con dos diferencias deliberadas: 128 px de ancho máximo (es un icono de
+   * pestaña, no una cabecera; los navegadores lo reescalan sin pena) y 1 MB
+   * de límite. Igual que el logo, sale en PNG (los SVG se guardan intactos).
+   */
+  async uploadFavicon(
+    tenantId: string,
+    input: { data: string; filename: string; contentType: string },
+  ): Promise<ThemeSnapshot> {
+    if (!ALLOWED_FAVICON_MIME_TYPES.includes(input.contentType as never)) {
+      throw new UnsupportedFaviconTypeError(input.contentType, ALLOWED_FAVICON_MIME_TYPES);
+    }
+
+    const buffer = Buffer.from(input.data, 'base64');
+    if (buffer.length === 0) {
+      throw new EmptyFaviconError();
+    }
+    if (buffer.length > MAX_FAVICON_BYTES) {
+      throw new FaviconTooLargeError(MAX_FAVICON_BYTES);
+    }
+
+    const current = await this.getOrCreate(tenantId);
+    if (current.faviconUploaded) {
+      await this.deleteFaviconBlob(tenantId).catch(() => {
+        // Best-effort: si el blob anterior ya no existe en storage, seguimos.
+      });
+    }
+
+    const requestedKey = `tenants/${tenantId}/branding/favicon`;
+    const stored = await this.ctx.storage.uploadImage(requestedKey, buffer, input.contentType, {
+      maxWidth: 128,
+      format: 'png',
+    });
+
+    // Cache-buster basado en timestamp para que el browser refresque al cambiar.
+    const publicUrl = `/api/v1/modules/theming/tenants/${tenantId}/favicon?v=${Date.now()}`;
+
+    const updated = await this.prisma.modThemingTenantTheme.update({
+      where: { tenantId },
+      data: {
+        faviconUrl: publicUrl,
+        // Key y MIME REALES que devolvió el core (ver nota en uploadLogo).
+        faviconStorageKey: stored.key,
+        faviconMimeType: stored.contentType,
+      },
+    });
+
+    await this.ctx.eventBus.publish({
+      name: 'theming.favicon.uploaded',
+      version: 1,
+      data: { tenantId, contentType: input.contentType, size: buffer.length },
+      metadata: {
+        tenantId,
+        timestamp: new Date().toISOString(),
+        traceId: `${tenantId}:favicon:${Date.now()}`,
+        idempotencyKey: `theming.favicon.uploaded:${tenantId}:${Date.now()}`,
+      },
+    });
+    this.ctx.logger.info('mod.theming: favicon uploaded', {
+      tenantId,
+      size: stored.size,
+      originalSize: buffer.length,
+      contentType: stored.contentType,
+      optimized: stored.optimized,
+    });
+
+    return this.toSnapshot(updated);
+  }
+
+  /**
+   * Devuelve el blob del favicon para el endpoint público. Lanza
+   * `FaviconNotFoundError` si no hay favicon subido (un `faviconUrl` externo
+   * no pasa por aquí).
+   */
+  async getFaviconBlob(tenantId: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    const theme = await this.prisma.modThemingTenantTheme.findUnique({
+      where: { tenantId },
+    });
+    if (!theme || !theme.faviconStorageKey || !theme.faviconMimeType) {
+      throw new FaviconNotFoundError();
+    }
+    const buffer = await this.ctx.storage.download(theme.faviconStorageKey);
+    return { buffer, mimeType: theme.faviconMimeType };
+  }
+
+  /**
+   * Borra el favicon subido (blob + columnas). Un `faviconUrl` externo también
+   * se limpia, igual que hace `removeLogo` con el logo.
+   */
+  async removeFavicon(tenantId: string): Promise<ThemeSnapshot> {
+    const current = await this.getOrCreate(tenantId);
+    if (current.faviconUploaded) {
+      await this.deleteFaviconBlob(tenantId).catch(() => {
+        // Best-effort.
+      });
+    }
+    const updated = await this.prisma.modThemingTenantTheme.update({
+      where: { tenantId },
+      data: {
+        faviconUrl: null,
+        faviconStorageKey: null,
+        faviconMimeType: null,
+      },
+    });
+    this.ctx.logger.info('mod.theming: favicon removed', { tenantId });
+    return this.toSnapshot(updated);
+  }
+
+  private async deleteFaviconBlob(tenantId: string): Promise<void> {
+    const theme = await this.prisma.modThemingTenantTheme.findUnique({
+      where: { tenantId },
+    });
+    if (theme?.faviconStorageKey) {
+      await this.ctx.storage.delete(theme.faviconStorageKey);
+    }
+  }
+
   // -------------------- helpers privados --------------------
 
   private validate(dto: UpdateThemeDto): void {
@@ -347,6 +478,7 @@ export class ThemingService {
     logoStorageKey: string | null;
     logoDisplayMode: string;
     faviconUrl: string | null;
+    faviconStorageKey: string | null;
     brandHue: number;
     brandSaturation: number;
     displayFontFamily: string;
@@ -368,6 +500,7 @@ export class ThemingService {
         ? (row.logoDisplayMode as LogoDisplayMode)
         : DEFAULT_LOGO_DISPLAY_MODE,
       faviconUrl: row.faviconUrl,
+      faviconUploaded: row.faviconStorageKey !== null,
       brandHue: row.brandHue,
       brandSaturation: row.brandSaturation,
       displayFontFamily: row.displayFontFamily,

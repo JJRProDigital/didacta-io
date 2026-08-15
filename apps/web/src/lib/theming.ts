@@ -34,6 +34,8 @@ export interface TenantTheme {
   logoUploaded: boolean;
   logoDisplayMode: LogoDisplayMode;
   faviconUrl: string | null;
+  /** True si el favicon se subió al storage del tenant (vs URL externa). */
+  faviconUploaded: boolean;
   brandHue: number;
   brandSaturation: number;
   displayFontFamily: string;
@@ -86,6 +88,23 @@ export const themingApi = {
   },
   async removeLogo(bearer: string): Promise<TenantTheme> {
     return apiFetch<TenantTheme>('/api/v1/modules/theming/me/logo', { method: 'DELETE' }, bearer);
+  },
+  async uploadFavicon(
+    bearer: string,
+    input: { data: string; filename: string; contentType: string },
+  ): Promise<TenantTheme> {
+    return apiFetch<TenantTheme>(
+      '/api/v1/modules/theming/me/favicon',
+      { method: 'POST', body: JSON.stringify(input) },
+      bearer,
+    );
+  },
+  async removeFavicon(bearer: string): Promise<TenantTheme> {
+    return apiFetch<TenantTheme>(
+      '/api/v1/modules/theming/me/favicon',
+      { method: 'DELETE' },
+      bearer,
+    );
   },
 };
 
