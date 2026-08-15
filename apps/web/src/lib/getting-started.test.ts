@@ -45,6 +45,9 @@ describe('deriveChecklist', () => {
         theme: { logoUrl: null } as never,
         smtpStatus: 'none',
         stripeConfigured: false,
+        // Cobros SALTADO («Ahora no»), no respondido con «No vendo cursos»:
+        // el ítem debe reclamarse.
+        progress: { ...PROGRESO_TODO_HECHO, done: ['curso', 'alumnos'], skipped: ['cobros'] },
       }),
     );
     const byKey = Object.fromEntries(items.map((i) => [i.key, i.done]));
@@ -52,9 +55,27 @@ describe('deriveChecklist', () => {
     expect(byKey['marca']).toBe(false);
     expect(byKey['correo']).toBe(false);
     expect(byKey['cobros']).toBe(false);
-    // curso/alumnos vienen del progreso, que aquí sigue todo hecho.
+    // curso/alumnos vienen del progreso.
     expect(byKey['curso']).toBe(true);
     expect(byKey['alumnos']).toBe(true);
+  });
+
+  it('«No vendo cursos» (cobros hecho en el asistente SIN Stripe) omite el ítem de cobros', () => {
+    const items = deriveChecklist(inputs({ stripeConfigured: false }));
+    // PROGRESO_TODO_HECHO lleva cobros en done: esa combinación solo sale del
+    // botón «No vendo cursos», así que no hay pendiente que reclamar.
+    expect(items.find((i) => i.key === 'cobros')).toBeUndefined();
+    expect(items).toHaveLength(5);
+  });
+
+  it('con Stripe configurado el ítem se enseña hecho, diga lo que diga el asistente', () => {
+    const items = deriveChecklist(
+      inputs({
+        stripeConfigured: true,
+        progress: { ...PROGRESO_TODO_HECHO, done: ['curso', 'alumnos'], skipped: ['cobros'] },
+      }),
+    );
+    expect(items.find((i) => i.key === 'cobros')?.done).toBe(true);
   });
 
   it('un paso saltado en el asistente («Ahora no») queda pendiente', () => {
@@ -102,7 +123,13 @@ describe('isChecklistComplete', () => {
   });
 
   it('false con al menos un pendiente', () => {
-    const items = deriveChecklist(inputs({ stripeConfigured: false }));
+    const items = deriveChecklist(inputs({ smtpStatus: 'none' }));
     expect(isChecklistComplete(items)).toBe(false);
+  });
+
+  it('true cuando lo único «pendiente» era un cobros que el admin dijo no querer', () => {
+    // 5 ítems hechos + cobros omitido por «No vendo cursos» = academia lista.
+    const items = deriveChecklist(inputs({ stripeConfigured: false }));
+    expect(isChecklistComplete(items)).toBe(true);
   });
 });

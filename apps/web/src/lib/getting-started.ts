@@ -48,8 +48,24 @@ export interface ChecklistInputs {
  * tirantes frente a progresos guardados por versiones con otra semántica —
  * ante la duda, reclamar el paso es el fallo barato.
  */
-function pasoHecho(progress: OnboardingProgress, paso: 'curso' | 'alumnos'): boolean {
+function pasoHecho(progress: OnboardingProgress, paso: 'curso' | 'alumnos' | 'cobros'): boolean {
   return progress.done.includes(paso) && !progress.skipped.includes(paso);
+}
+
+/**
+ * ¿El admin respondió «No vendo cursos» en el paso de cobros del asistente?
+ *
+ * La señal es inequívoca: ese botón marca `cobros` como hecho SIN configurar
+ * Stripe — el único otro camino a `done` es guardar la config, y entonces
+ * `hasSecretKey` es true. «Ahora no» (skipped) es distinto: eso es «luego»,
+ * y el checklist sí debe reclamarlo.
+ */
+function dijoQueNoVende(inputs: ChecklistInputs): boolean {
+  return (
+    inputs.progress !== null &&
+    pasoHecho(inputs.progress, 'cobros') &&
+    inputs.stripeConfigured === false
+  );
 }
 
 export function deriveChecklist(inputs: ChecklistInputs): ChecklistItem[] {
@@ -72,7 +88,11 @@ export function deriveChecklist(inputs: ChecklistInputs): ChecklistItem[] {
       href: DESTINOS.alumnos!,
     });
   }
-  if (inputs.stripeConfigured !== null) {
+  // Quien respondió «No vendo cursos» en el asistente no tiene un pendiente
+  // de Stripe: tiene una decisión tomada. El ítem se OMITE — pintarlo como
+  // hecho sería mentir y dejarlo pendiente sería reclamar eternamente algo
+  // que dijo que no quiere (feedback de Valen, 15-ago).
+  if (inputs.stripeConfigured !== null && !dijoQueNoVende(inputs)) {
     items.push({ key: 'cobros', done: inputs.stripeConfigured, href: DESTINOS.cobros! });
   }
   if (inputs.smtpStatus !== null) {
