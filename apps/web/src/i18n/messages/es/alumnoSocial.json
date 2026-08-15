@@ -64,6 +64,7 @@
     "bioLimite": "{count}/280",
     "dniPlaceholder": "12345678Z o X1234567L (vacío si no aplica)",
     "dniAyuda": "Solo necesario para solicitar facturas de pago.",
+    "dniInvalido": "No parece un DNI/NIE válido: revisa los dígitos y la letra de control (o deja el campo vacío).",
     "cambiosGuardados": "✓ Cambios guardados",
     "cancelar": "Cancelar",
     "guardarCambios": "Guardar cambios"

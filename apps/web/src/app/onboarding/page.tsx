@@ -18,6 +18,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { ApiHttpError } from '@/lib/api-client';
 import { authStorage } from '@/lib/auth-storage';
+import { isDocumentFieldValid } from '@/lib/document-id';
 import { consumeIntendedPath } from '@/lib/post-login-redirect';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
 import { toSupportedLocale } from '@/i18n/config';
@@ -129,7 +130,16 @@ export default function OnboardingPage() {
     t('onboarding.stepDone'),
   ];
 
-  const canNext = step === 0 ? avatarUrl !== null : step === 1 ? name.trim().length > 0 : true;
+  // El DNI/NIE es opcional, pero si se rellena tiene que pasar el checksum: el
+  // backend lo rechazaría igual en el PATCH final, y descubrirlo en "Listo"
+  // en vez de en el campo era el issue #59.
+  const documentInvalid = !isDocumentFieldValid(documentId);
+  const canNext =
+    step === 0
+      ? avatarUrl !== null
+      : step === 1
+        ? name.trim().length > 0 && !documentInvalid
+        : true;
 
   async function handleComplete() {
     const token = authStorage.getAccessToken();
@@ -308,9 +318,16 @@ export default function OnboardingPage() {
                   maxLength={20}
                   autoComplete="off"
                   spellCheck={false}
+                  aria-invalid={documentInvalid || undefined}
                   placeholder={t('onboarding.documentPlaceholder')}
                 />
-                <p className="text-xs text-text-subtle">{t('onboarding.documentHint')}</p>
+                {documentInvalid ? (
+                  <p role="alert" className="text-xs text-danger-700">
+                    {t('onboarding.documentInvalid')}
+                  </p>
+                ) : (
+                  <p className="text-xs text-text-subtle">{t('onboarding.documentHint')}</p>
+                )}
               </div>
             </div>
           ) : null}

@@ -64,6 +64,7 @@
     "bioLimite": "{count}/280",
     "dniPlaceholder": "12345678Z or X1234567L (leave empty if not applicable)",
     "dniAyuda": "Only needed to request payment invoices.",
+    "dniInvalido": "This doesn't look like a valid DNI/NIE: check the digits and the control letter (or leave the field empty).",
     "cambiosGuardados": "✓ Changes saved",
     "cancelar": "Cancel",
     "guardarCambios": "Save changes"

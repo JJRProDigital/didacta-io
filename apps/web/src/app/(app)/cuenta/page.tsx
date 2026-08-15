@@ -32,6 +32,7 @@ import { writeLocaleCookie } from '@/lib/i18n/locale-cookie';
 import type { TranslatorLike } from '@/lib/i18n/labels';
 import { learningApi, type MyCompetencies } from '@/lib/learning';
 import { authStorage } from '@/lib/auth-storage';
+import { isDocumentFieldValid } from '@/lib/document-id';
 import { loadProfileStats, type ProfileStats } from '@/lib/profile-stats';
 import { communityApi } from '@/modules/community';
 import { certificatesApi, type Certificate } from '@/modules/certificates';
@@ -202,6 +203,13 @@ export default function CuentaPage() {
     e.preventDefault();
     const token = authStorage.getAccessToken();
     if (!token) return;
+    // Mismo checksum que valida el backend en PATCH /me: cortar aquí evita un
+    // 400 con mensaje genérico lejos del campo (el inline del form ya está en
+    // rojo; esto cubre el submit con teclado sin pasar por el campo).
+    if (!isDocumentFieldValid(documentId)) {
+      setError(t('cuenta.dniInvalido'));
+      return;
+    }
     setPending(true);
     setError(null);
     setSuccess(false);
@@ -871,8 +879,15 @@ function EditProfileForm(props: {
               autoComplete="off"
               spellCheck={false}
               maxLength={20}
+              aria-invalid={!isDocumentFieldValid(p.documentId) || undefined}
             />
-            <p className="text-xs text-text-subtle">{t('cuenta.dniAyuda')}</p>
+            {!isDocumentFieldValid(p.documentId) ? (
+              <p role="alert" className="text-xs text-danger-700">
+                {t('cuenta.dniInvalido')}
+              </p>
+            ) : (
+              <p className="text-xs text-text-subtle">{t('cuenta.dniAyuda')}</p>
+            )}
           </div>
 
           {p.error ? (
