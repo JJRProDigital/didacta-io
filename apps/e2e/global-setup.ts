@@ -32,7 +32,13 @@
  * La receta completa para dejar el stack en pie está en `scripts/e2e-stack.sh`.
  */
 
-import { completeOnboarding, ONBOARDING_AVATAR_URL, signin, SMOKE_API_URL } from './helpers/api';
+import {
+  completeAcademyOnboarding,
+  completeOnboarding,
+  ONBOARDING_AVATAR_URL,
+  signin,
+  SMOKE_API_URL,
+} from './helpers/api';
 
 /** Techo mínimo de rate limit por minuto para que una tanda serie no se ahogue. */
 const MIN_RATE_LIMIT_PER_MIN = 1_000;
@@ -247,6 +253,9 @@ async function prepareAdmin(
   assertPoliticaMfaCoincide(session, email, false);
   const token = session.tokens.accessToken;
   await completeOnboarding(token, baseUrl);
+  // El asistente de ACADEMIA (`/bienvenida`, alpha.112) es otro gate y va
+  // ANTES que el de perfil: sin cerrarlo, todo spec de UI de admin rebota.
+  await completeAcademyOnboarding(token, baseUrl);
   return token;
 }
 

@@ -13,6 +13,15 @@ instalación real. Si mañana cambia la interfaz, se vuelve a lanzar.
 | ----------------------------------- | -------- | ----------------------------------------------------------- |
 | `01-recorrido-visual.spec.ts`       | 22       | `docs/assets/recorrido-visual/` (es) · `.../en/` (en)       |
 | `02-notificaciones-y-pagos.spec.ts` | 18       | `docs/assets/notificaciones-y-pagos/` (es) · `.../en/` (en) |
+| `03-modulos.spec.ts`                | ~72      | `docs/assets/modulos/<modulo>/` (es) · `.../en/` (en)       |
+
+El tercer spec corre **después** de los otros dos (mismo orden alfabético) y da
+por hecho su estado. A diferencia de ellos, construye el estado de cada módulo
+por API y cada bloque/captura va en try/catch: lo que falle se salta con un
+`console.warn('[modulos] …')` y el resto de la tanda sigue. Al final imprime el
+resumen de tomadas/saltadas. Las capturas que exigen servicios reales (clave de
+IA, cuenta Stripe de verdad, RLPT de Fundae…) están excluidas a propósito y
+anotadas al final del propio spec.
 
 Los PNG **no se versionan en este repo**: caen en `apps/e2e/shots-output/`
 (ignorado) y de ahí se copian al repo de documentación.
@@ -67,14 +76,17 @@ SHOTS_LOCALE=en-US node ../../node_modules/@playwright/test/cli.js \
   test --config playwright.shots.config.ts
 ```
 
-Cada tanda tarda **~35 s**. Al terminar:
+Los recorridos 1 y 2 tardan **~35 s**; el de módulos añade varios minutos
+(construye el estado de 20+ módulos por API). Al terminar:
 
 ```
 apps/e2e/shots-output/
 ├── recorrido-visual/            22 PNG en español
 │   └── en/                      22 PNG en inglés
-└── notificaciones-y-pagos/      18 PNG en español
-    └── en/                      18 PNG en inglés
+├── notificaciones-y-pagos/      18 PNG en español
+│   └── en/                      18 PNG en inglés
+└── modulos/<modulo>/            capturas del módulo en español
+    └── en/                      y en inglés
 ```
 
 Copiar a `didacta-docs/docs/assets/` respetando la misma estructura.

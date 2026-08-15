@@ -78,6 +78,30 @@ export async function setProfileLocale(bearer: string, locale = LOCALE): Promise
   await api('/api/v1/me/profile', { method: 'PATCH', body: { locale }, bearer });
 }
 
+/**
+ * Da por hecho el asistente de puesta en marcha de la ACADEMIA (`/bienvenida`,
+ * alpha.112+). Es distinto del onboarding de PERFIL (`/onboarding`): el gate
+ * de `(app)/layout.tsx` manda a los admins con este asistente sin completar a
+ * `/bienvenida` ANTES de mirar el perfil, así que sin este paso el recorrido
+ * no puede pisar ninguna pantalla del panel. El asistente en sí ya se retrata
+ * en la documentación con sus propias capturas; aquí solo se cierra.
+ */
+export async function completeAcademyOnboarding(bearer: string): Promise<void> {
+  await api('/api/v1/tenant-settings/onboarding/academy', {
+    method: 'PUT',
+    body: {
+      value: {
+        step: 'resumen',
+        done: ['nombre', 'marca'],
+        skipped: ['curso', 'alumnos', 'cobros', 'correo'],
+        completedAt: new Date().toISOString(),
+      },
+      isSecret: false,
+    },
+    bearer,
+  });
+}
+
 /** Cookie de idioma para que el PRIMER render del servidor ya salga bien. */
 export async function setLocaleCookie(context: BrowserContext, url: string): Promise<void> {
   await context.addCookies([{ name: 'didacta_locale', value: LOCALE, url }]);

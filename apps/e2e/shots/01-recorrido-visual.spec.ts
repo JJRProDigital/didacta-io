@@ -24,6 +24,7 @@ import {
   api,
   deleteTenantSmtp,
   extractResetToken,
+  completeAcademyOnboarding,
   injectSession,
   mailpitClear,
   mailpitWaitFor,
@@ -133,6 +134,11 @@ test('recorrido visual · 22 capturas', async ({ browser }) => {
   // la UI a español. Sin esta línea la tanda inglesa sale en español entera.
   const adminToken = await readAccessToken(admin);
   await setProfileLocale(adminToken);
+
+  // El asistente de puesta en marcha de la academia (`/bienvenida`, alpha.112)
+  // se cierra por API: su gate va ANTES que el de perfil y sin esto el
+  // recorrido rebota a `/bienvenida` en la primera pantalla del panel.
+  await completeAcademyOnboarding(adminToken);
 
   // ──────────────────────────────────────────────────────── 2 · onboarding ──
   await admin.getByRole('button', { name: t('auth', 'setup.tourCta') }).click();

@@ -191,6 +191,33 @@ export async function completeOnboarding(bearer: string, baseUrl?: string): Prom
   return done.onboardingCompletedAt;
 }
 
+/**
+ * Cierra el asistente de puesta en marcha de la ACADEMIA (`/bienvenida`,
+ * alpha.112+). Es un gate DISTINTO del onboarding de perfil y va ANTES: el
+ * shell manda a cualquier admin con este asistente sin completar a
+ * `/bienvenida`, así que sin este paso todo spec de UI que navegue como admin
+ * rebota al asistente y falla con síntomas que parecen de producto — la misma
+ * clase de degradación que ya costó una sesión con el onboarding de perfil.
+ *
+ * Idempotente: escribir la fila completada dos veces da el mismo estado.
+ */
+export async function completeAcademyOnboarding(bearer: string, baseUrl?: string): Promise<void> {
+  await api('/api/v1/tenant-settings/onboarding/academy', {
+    method: 'PUT',
+    body: {
+      value: {
+        step: 'resumen',
+        done: ['nombre', 'marca'],
+        skipped: ['curso', 'alumnos', 'cobros', 'correo'],
+        completedAt: new Date().toISOString(),
+      },
+      isSecret: false,
+    },
+    bearer,
+    baseUrl,
+  });
+}
+
 /** Contraseña de los usuarios que el arnés fabrica. Sintética, de un solo uso. */
 export const E2E_USER_PASSWORD = 'E2eTestPassword123!';
 

@@ -17,8 +17,12 @@ import path from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { CATALOG, OUT_DIR } from './config';
 
-/** `recorrido-visual` | `notificaciones-y-pagos`. */
-export type Walkthrough = 'recorrido-visual' | 'notificaciones-y-pagos';
+/**
+ * Recorridos con nombre propio (`01`/`02`) más los de los MÓDULOS (`03`), que
+ * cuelgan de un subdirectorio por módulo: `modulos/theming`, `modulos/courses`…
+ * `outputDir` los resuelve con `path.join`, así que la subruta funciona igual.
+ */
+export type Walkthrough = 'recorrido-visual' | 'notificaciones-y-pagos' | `modulos/${string}`;
 
 /**
  * Directorio de salida del recorrido en el idioma activo.
