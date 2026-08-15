@@ -66,7 +66,8 @@ describe('adminSmtpApi.get', () => {
     const dto: AdminSmtpDto = {
       host: 'smtp.example.com',
       port: 587,
-      secure: true,
+      encryption: 'starttls',
+      secure: null,
       username: 'apikey',
       hasPassword: true,
       fromEmail: 'noreply@example.com',
@@ -200,6 +201,7 @@ describe('deriveSmtpStatus', () => {
   const base: AdminSmtpDto = {
     host: null,
     port: null,
+    encryption: null,
     secure: null,
     username: null,
     hasPassword: false,

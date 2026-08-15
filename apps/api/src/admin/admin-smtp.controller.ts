@@ -23,6 +23,7 @@ import type { SessionClaims } from '../auth/token.service';
 import { ZodValidationPipe } from '../auth/zod-validation.pipe';
 import { ModuleContextFactory } from '../modules/module-context.factory';
 import { PrismaService } from '../prisma/prisma.service';
+import { SmtpEncryptionSchema, type SmtpEncryption } from '../modules/smtp-adapter.service';
 import { TenantSmtpResolverService } from '../modules/tenant-smtp-resolver.service';
 import {
   resolveEmailBranding,
@@ -55,8 +56,13 @@ const SMTP_TEST_TEMPLATE_KEY = 'admin.smtp.test';
 
 /**
  * Body del PUT /admin/tenant-settings/smtp. `password` opcional: si no se
- * envía o viene vacío, se conserva el password actual del tenant. `secure`
- * opcional: si se omite, nodemailer infiere (port 465 → true, resto → false).
+ * envía o viene vacío, se conserva el password actual del tenant.
+ *
+ * `encryption` es el modo de cifrado explícito (tls / starttls / none). El
+ * boolean `secure` se sigue aceptando por compatibilidad con clientes viejos,
+ * pero si viajan los dos gana `encryption` y `secure` se descarta. Si no viene
+ * ninguno, el adapter infiere por puerto (465 → TLS implícito, resto → claro
+ * con STARTTLS oportunista).
  *
  * `fromName` opcional — se concatena con `fromEmail` como "Name <email>" si
  * está presente. El schema interno del SmtpAdapter sólo guarda el email,
@@ -65,6 +71,7 @@ const SMTP_TEST_TEMPLATE_KEY = 'admin.smtp.test';
 const SmtpUpsertSchema = z.object({
   host: z.string().min(1).max(255),
   port: z.number().int().min(1).max(65535),
+  encryption: SmtpEncryptionSchema.optional(),
   secure: z.boolean().optional(),
   username: z.string().min(1).max(255),
   password: z.string().max(2048).optional(),
@@ -100,6 +107,11 @@ const TemplateTestSchema = z.object({
 interface SmtpResponseDto {
   host: string | null;
   port: number | null;
+  /**
+   * Modo de cifrado efectivo. Para configs legadas sin el campo se deriva del
+   * boolean `secure` (o del puerto), para que el form pueda preseleccionar.
+   */
+  encryption: SmtpEncryption | null;
   secure: boolean | null;
   username: string | null;
   hasPassword: boolean;
@@ -205,13 +217,19 @@ export class AdminSmtpController {
       });
     }
 
+    // Si viaja `encryption` no persistimos el `secure` legado: dos fuentes de
+    // verdad para lo mismo solo pueden desincronizarse.
     const secret = {
       host: body.host,
       port: body.port,
       user: body.username,
       password: finalPassword,
       from: body.fromEmail,
-      ...(body.secure !== undefined ? { secure: body.secure } : {}),
+      ...(body.encryption
+        ? { encryption: body.encryption }
+        : body.secure !== undefined
+          ? { secure: body.secure }
+          : {}),
     };
 
     await config.set(claims.tenantId, 'notifications', 'smtp', secret, {
@@ -463,6 +481,7 @@ export class AdminSmtpController {
           user?: string;
           password?: string;
           from?: string;
+          encryption?: SmtpEncryption;
           secure?: boolean;
         }
       | undefined;
@@ -482,9 +501,24 @@ export class AdminSmtpController {
     const globalResolved = await this.resolver.resolve(tenantId);
     const hasGlobalFallback = globalResolved?.source === 'global';
 
+    // Deriva el modo para configs legadas: `secure:false` se presenta como
+    // `starttls` (la intención era "no TLS implícito"; al re-guardar pasa a
+    // STARTTLS estricto) y sin boolean se infiere por puerto.
+    const encryption: SmtpEncryption | null = !secret
+      ? null
+      : (secret.encryption ??
+        (secret.secure === true
+          ? 'tls'
+          : secret.secure === false
+            ? 'starttls'
+            : secret.port === 465
+              ? 'tls'
+              : 'starttls'));
+
     return {
       host: secret?.host ?? null,
       port: secret?.port ?? null,
+      encryption,
       secure: secret?.secure ?? null,
       username: secret?.user ?? null,
       hasPassword: Boolean(secret?.password),

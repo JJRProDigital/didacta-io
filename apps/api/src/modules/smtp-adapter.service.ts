@@ -12,13 +12,30 @@ import { z } from 'zod';
  * `/admin/configuracion`. Se persiste cifrada con AES-256-GCM en
  * `tenant_setting` bajo (moduleName='notifications', key='smtp', is_secret=true).
  */
+/**
+ * Modo de cifrado explícito de la conexión SMTP:
+ *  - `tls`: TLS implícito desde el primer byte (puerto 465).
+ *  - `starttls`: conexión en claro que se actualiza con STARTTLS (puerto 587).
+ *    Obligatorio: si el servidor no ofrece el upgrade, el envío falla en vez
+ *    de degradar a texto plano.
+ *  - `none`: sin cifrado (MTAs internos tipo mailpit o postfix local).
+ */
+export const SmtpEncryptionSchema = z.enum(['tls', 'starttls', 'none']);
+
+export type SmtpEncryption = z.infer<typeof SmtpEncryptionSchema>;
+
 export const SmtpConfigSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535),
   user: z.string().min(1),
   password: z.string().min(1),
   from: z.string().email(),
-  /** STARTTLS si es true; TLS implícito si false (port 465). Default: auto por puerto. */
+  encryption: SmtpEncryptionSchema.optional(),
+  /**
+   * Legado (configs guardadas antes de existir `encryption`): true → TLS
+   * implícito; false → claro con STARTTLS oportunista; ausente → inferencia
+   * por puerto (465 → TLS implícito). Solo se consulta si falta `encryption`.
+   */
   secure: z.boolean().optional(),
 });
 
@@ -108,12 +125,37 @@ export class SmtpAdapterService {
     }
   }
 
+  /**
+   * `secure` de nodemailer significa TLS IMPLÍCITO desde el primer byte: contra
+   * un puerto STARTTLS (587) el handshake revienta con "wrong version number"
+   * (issue #60). De ahí el modo explícito: `starttls` fuerza `requireTLS` (si
+   * el servidor no ofrece el upgrade, falla — nunca degrada a claro) y `none`
+   * apaga también el upgrade oportunista. Sin `encryption` se conserva el
+   * comportamiento legado: boolean `secure` o inferencia por puerto, con
+   * STARTTLS oportunista cuando la conexión empieza en claro.
+   */
+  private tlsOptions(config: SmtpConfig): {
+    secure: boolean;
+    requireTLS?: boolean;
+    ignoreTLS?: boolean;
+  } {
+    switch (config.encryption) {
+      case 'tls':
+        return { secure: true };
+      case 'starttls':
+        return { secure: false, requireTLS: true };
+      case 'none':
+        return { secure: false, ignoreTLS: true };
+      default:
+        return { secure: config.secure ?? config.port === 465 };
+    }
+  }
+
   private createTransporter(config: SmtpConfig): Transporter {
-    const secure = config.secure ?? config.port === 465;
     return nodemailer.createTransport({
       host: config.host,
       port: config.port,
-      secure,
+      ...this.tlsOptions(config),
       auth: {
         user: config.user,
         pass: config.password,

@@ -114,6 +114,7 @@ describe('AdminSmtpController', () => {
       expect(dto).toEqual({
         host: null,
         port: null,
+        encryption: null,
         secure: null,
         username: null,
         hasPassword: false,
@@ -163,6 +164,38 @@ describe('AdminSmtpController', () => {
       await expect(
         controller.upsert(ADMIN_USER as never, { ...VALID_BODY, password: undefined }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('persiste `encryption` y lo devuelve en el DTO', async () => {
+      const dto = await controller.upsert(ADMIN_USER as never, {
+        ...VALID_BODY,
+        encryption: 'starttls' as const,
+      });
+      expect(dto.encryption).toBe('starttls');
+
+      const stored = configStub.store.get(`${TENANT_A}|notifications|smtp`);
+      expect((stored?.value as { encryption?: string }).encryption).toBe('starttls');
+    });
+
+    it('si viajan encryption y el `secure` legado, gana encryption y secure no se persiste', async () => {
+      await controller.upsert(ADMIN_USER as never, {
+        ...VALID_BODY,
+        encryption: 'starttls' as const,
+        secure: true,
+      });
+      const stored = configStub.store.get(`${TENANT_A}|notifications|smtp`);
+      expect((stored?.value as { encryption?: string }).encryption).toBe('starttls');
+      expect(stored?.value).not.toHaveProperty('secure');
+    });
+
+    it('config legada sin encryption → el GET deriva el modo (secure:true → tls; sin boolean, por puerto)', async () => {
+      // Guardado por un cliente viejo: solo el boolean.
+      await controller.upsert(ADMIN_USER as never, { ...VALID_BODY, secure: true });
+      expect((await controller.getCurrent(ADMIN_USER as never)).encryption).toBe('tls');
+
+      // Sin boolean ni encryption: puerto 587 → starttls.
+      await controller.upsert(ADMIN_USER as never, VALID_BODY);
+      expect((await controller.getCurrent(ADMIN_USER as never)).encryption).toBe('starttls');
     });
   });
 

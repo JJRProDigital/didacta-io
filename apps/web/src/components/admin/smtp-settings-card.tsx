@@ -9,7 +9,7 @@
  * Tarjeta de configuración SMTP per-tenant. Consume el controlador dedicado
  * `/api/v1/admin/tenant-settings/smtp` (alpha.75 backend) en lugar del
  * almacenamiento genérico de `tenant_setting`. El backend devuelve un DTO
- * plano (host, port, secure, username, fromEmail, fromName) + flags de
+ * plano (host, port, encryption, username, fromEmail, fromName) + flags de
  * estado (`hasPassword`, `verifiedAt`, `hasTenantConfig`, `hasGlobalFallback`)
  * que mapeamos a 4 estados visuales en el banner superior.
  *
@@ -24,7 +24,7 @@
  *    al tenant cayendo al fallback global (si lo hay) o sin SMTP.
  *
  * Estilo: matchea el resto de `/admin/configuracion` (shadcn/ui Card/Input/
- * Button/Switch + paleta de tokens `brand-`, `success-`, `warning-`,
+ * Button/Select + paleta de tokens `brand-`, `success-`, `warning-`,
  * `danger-`).
  */
 
@@ -42,7 +42,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
+import { Select } from '@/components/ui/select';
 import {
   adminSmtpApi,
   deriveSmtpStatus,
@@ -54,17 +54,24 @@ import { authStorage } from '@/lib/auth-storage';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
 import { formatDateTime } from '@/lib/i18n/format';
 import { labelOr } from '@/lib/i18n/labels';
-import { smtpFormSchema, type SmtpFormValues } from './smtp-form-schema';
+import {
+  canonicalEncryptionForPort,
+  smtpFormSchema,
+  type SmtpFormValues,
+} from './smtp-form-schema';
 
 // Re-export para que los tests existentes que ya importaban el schema desde
 // este archivo no se rompan (vía path `@/components/admin/smtp-settings-card`).
 export { smtpFormSchema };
 export type { SmtpFormValues };
 
+// STARTTLS por defecto: es lo que espera el puerto 587. El default previo
+// (`secure: true` = TLS implícito) rompía contra cualquier proveedor STARTTLS
+// con "wrong version number" (issue #60).
 const EMPTY_FORM: SmtpFormValues = {
   host: '',
   port: 587,
-  secure: true,
+  encryption: 'starttls',
   username: '',
   password: '',
   fromEmail: '',
@@ -124,7 +131,7 @@ export function SmtpSettingsCard({
         setForm({
           host: data.host ?? '',
           port: data.port ?? 587,
-          secure: data.secure ?? true,
+          encryption: data.encryption ?? canonicalEncryptionForPort(data.port ?? 587) ?? 'starttls',
           username: data.username ?? '',
           password: '',
           fromEmail: data.fromEmail ?? '',
@@ -177,7 +184,7 @@ export function SmtpSettingsCard({
       const payload: AdminSmtpUpsertPayload = {
         host: parsed.data.host,
         port: parsed.data.port,
-        secure: parsed.data.secure,
+        encryption: parsed.data.encryption,
         username: parsed.data.username,
         fromEmail: parsed.data.fromEmail,
         ...(parsed.data.fromName ? { fromName: parsed.data.fromName } : {}),
@@ -231,7 +238,8 @@ export function SmtpSettingsCard({
       setForm({
         host: refreshed.host ?? '',
         port: refreshed.port ?? 587,
-        secure: refreshed.secure ?? true,
+        encryption:
+          refreshed.encryption ?? canonicalEncryptionForPort(refreshed.port ?? 587) ?? 'starttls',
         username: refreshed.username ?? '',
         password: '',
         fromEmail: refreshed.fromEmail ?? '',
@@ -293,23 +301,34 @@ export function SmtpSettingsCard({
               min={1}
               max={65535}
               value={form.port}
-              onChange={(e) => setForm({ ...form, port: Number(e.target.value) })}
+              onChange={(e) => {
+                const port = Number(e.target.value);
+                // Los puertos con convención clara arrastran el modo de
+                // cifrado (465 → TLS implícito, 587 → STARTTLS…): así el
+                // default nunca queda en un modo que el puerto no habla.
+                setForm((f) => ({
+                  ...f,
+                  port,
+                  encryption: canonicalEncryptionForPort(port) ?? f.encryption,
+                }));
+              }}
               placeholder={t('smtp.portPlaceholder')}
             />
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2/40 p-3 sm:col-span-2">
-            <div>
-              <Label htmlFor="smtp-secure" className="text-sm font-medium">
-                {t('smtp.secureLabel')}
-              </Label>
-              <p className="text-xs text-text-subtle">{t('smtp.secureHelp')}</p>
-            </div>
-            <Switch
-              id="smtp-secure"
-              checked={form.secure}
-              onCheckedChange={(checked) => setForm({ ...form, secure: checked })}
-              label={t('smtp.secureSwitchLabel')}
-            />
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="smtp-encryption">{t('smtp.encryptionLabel')}</Label>
+            <Select
+              id="smtp-encryption"
+              value={form.encryption}
+              onChange={(e) =>
+                setForm({ ...form, encryption: e.target.value as SmtpFormValues['encryption'] })
+              }
+            >
+              <option value="starttls">{t('smtp.encryptionStarttls')}</option>
+              <option value="tls">{t('smtp.encryptionTls')}</option>
+              <option value="none">{t('smtp.encryptionNone')}</option>
+            </Select>
+            <p className="text-xs text-text-subtle">{t('smtp.encryptionHelp')}</p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="smtp-username">{t('smtp.usernameLabel')}</Label>

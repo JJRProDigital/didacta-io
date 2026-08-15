@@ -150,6 +150,54 @@ describe('SmtpAdapterService', () => {
     });
   });
 
+  // Modo de cifrado explícito (issue #60: el boolean legado solo modelaba TLS
+  // implícito y reventaba contra proveedores STARTTLS en el 587).
+  describe('encryption explícito → opciones de nodemailer', () => {
+    async function transportOptionsFor(config: Record<string, unknown>) {
+      const nodemailer = (await import('nodemailer')).default;
+      const createTransport = nodemailer.createTransport as unknown as ReturnType<typeof vi.fn>;
+      createTransport.mockClear();
+      sendMailMock.mockResolvedValue({ messageId: 'x' });
+      await svc.send(svc.parseConfig(config), { to: 'a@b.com', subject: 's', text: 't' });
+      return createTransport.mock.calls[0]![0] as Record<string, unknown>;
+    }
+
+    it('tls → secure=true (TLS implícito)', async () => {
+      const opts = await transportOptionsFor({ ...VALID, port: 465, encryption: 'tls' });
+      expect(opts).toMatchObject({ secure: true });
+      expect(opts).not.toHaveProperty('requireTLS');
+      expect(opts).not.toHaveProperty('ignoreTLS');
+    });
+
+    it('starttls → secure=false + requireTLS (upgrade obligatorio, nunca degrada a claro)', async () => {
+      const opts = await transportOptionsFor({ ...VALID, encryption: 'starttls' });
+      expect(opts).toMatchObject({ secure: false, requireTLS: true });
+    });
+
+    it('none → secure=false + ignoreTLS (sin upgrade oportunista)', async () => {
+      const opts = await transportOptionsFor({ ...VALID, port: 1025, encryption: 'none' });
+      expect(opts).toMatchObject({ secure: false, ignoreTLS: true });
+    });
+
+    it('encryption gana al boolean legado si conviven', async () => {
+      // Config guardada con el default viejo (secure:true) que el admin
+      // corrige a STARTTLS: debe negociar STARTTLS aunque `secure` diga tls.
+      const opts = await transportOptionsFor({ ...VALID, secure: true, encryption: 'starttls' });
+      expect(opts).toMatchObject({ secure: false, requireTLS: true });
+    });
+
+    it('sin encryption → comportamiento legado intacto (boolean o puerto)', async () => {
+      const opts = await transportOptionsFor({ ...VALID, secure: false });
+      expect(opts).toMatchObject({ secure: false });
+      expect(opts).not.toHaveProperty('requireTLS');
+      expect(opts).not.toHaveProperty('ignoreTLS');
+    });
+
+    it('rechaza un modo desconocido', () => {
+      expect(() => svc.parseConfig({ ...VALID, encryption: 'ssl3' })).toThrow();
+    });
+  });
+
   describe('verify', () => {
     it('ok cuando el handshake responde', async () => {
       verifyMock.mockResolvedValue(true);

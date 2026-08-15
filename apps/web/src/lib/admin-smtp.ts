@@ -24,9 +24,17 @@
 import { ApiHttpError, apiFetch } from './api-client';
 import { authStorage } from './auth-storage';
 
+/**
+ * Modo de cifrado de la conexión SMTP: `tls` = TLS implícito (465),
+ * `starttls` = upgrade STARTTLS (587), `none` = sin cifrado (MTA local).
+ */
+export type SmtpEncryption = 'tls' | 'starttls' | 'none';
+
 export interface AdminSmtpDto {
   host: string | null;
   port: number | null;
+  /** Modo efectivo (para configs legadas el backend lo deriva de `secure`/puerto). */
+  encryption: SmtpEncryption | null;
   secure: boolean | null;
   username: string | null;
   /** True si hay password guardado (el cleartext nunca sale de la API). */
@@ -45,7 +53,9 @@ export interface AdminSmtpDto {
 export interface AdminSmtpUpsertPayload {
   host: string;
   port: number;
-  /** Si se omite, el backend infiere por puerto (465 → true, resto → false). */
+  /** Si se omite, el backend infiere por puerto (465 → tls, resto → STARTTLS oportunista). */
+  encryption?: SmtpEncryption;
+  /** Legado — solo se consulta si no viaja `encryption`. */
   secure?: boolean;
   username: string;
   /** Opcional: si viene vacío o ausente, se conserva el password guardado. */

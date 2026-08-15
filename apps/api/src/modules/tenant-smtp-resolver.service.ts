@@ -40,7 +40,8 @@ export interface ResolvedSmtp {
  * Convención de variables de entorno (compat con env.example):
  * - `SMTP_HOST`, `SMTP_PORT` (number), `SMTP_USER` (opt), `SMTP_PASS`
  *   o `SMTP_PASSWORD` (opt), `SMTP_FROM` (email o "Nombre <email>"),
- *   `SMTP_SECURE` (`true`/`false`, opcional — autodetect por puerto).
+ *   `SMTP_ENCRYPTION` (`tls`/`starttls`/`none`, opcional),
+ *   `SMTP_SECURE` (`true`/`false`, legado — autodetect por puerto).
  */
 @Injectable()
 export class TenantSmtpResolverService {
@@ -138,6 +139,11 @@ export class TenantSmtpResolverService {
     const password = process.env['SMTP_PASS']?.trim() || process.env['SMTP_PASSWORD']?.trim() || '';
     const secureRaw = process.env['SMTP_SECURE']?.trim().toLowerCase();
     const secure = secureRaw === 'true' ? true : secureRaw === 'false' ? false : undefined;
+    const encryptionRaw = process.env['SMTP_ENCRYPTION']?.trim().toLowerCase();
+    const encryption =
+      encryptionRaw === 'tls' || encryptionRaw === 'starttls' || encryptionRaw === 'none'
+        ? encryptionRaw
+        : undefined;
 
     // El schema exige host + port + from email. user/password son opcionales
     // en MTAs locales (mailpit, postfix sin auth). Si user está vacío, el
@@ -152,7 +158,7 @@ export class TenantSmtpResolverService {
       user: user || 'anonymous',
       password: password || 'anonymous',
       from,
-      ...(secure !== undefined ? { secure } : {}),
+      ...(encryption !== undefined ? { encryption } : secure !== undefined ? { secure } : {}),
     };
     if (!this.smtp.isConfigValid(candidate)) return null;
     return this.smtp.parseConfig(candidate);

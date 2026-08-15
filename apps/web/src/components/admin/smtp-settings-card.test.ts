@@ -10,13 +10,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { smtpFormSchema } from './smtp-form-schema';
+import { canonicalEncryptionForPort, smtpFormSchema } from './smtp-form-schema';
 
 describe('smtpFormSchema', () => {
   const valid = {
     host: 'smtp.example.com',
     port: 587,
-    secure: true,
+    encryption: 'starttls',
     username: 'apikey',
     password: 'secret-xyz',
     fromEmail: 'noreply@example.com',
@@ -85,5 +85,24 @@ describe('smtpFormSchema', () => {
       expect(result.data.host).toBe('smtp.example.com');
       expect(result.data.username).toBe('apikey');
     }
+  });
+
+  it('rechaza un modo de cifrado desconocido', () => {
+    const result = smtpFormSchema.safeParse({ ...valid, encryption: 'ssl3' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('canonicalEncryptionForPort', () => {
+  it('mapea los puertos con convención', () => {
+    expect(canonicalEncryptionForPort(465)).toBe('tls');
+    expect(canonicalEncryptionForPort(587)).toBe('starttls');
+    expect(canonicalEncryptionForPort(25)).toBe('none');
+    expect(canonicalEncryptionForPort(1025)).toBe('none');
+  });
+
+  it('null en puertos sin convención (no pisa la elección del admin)', () => {
+    expect(canonicalEncryptionForPort(2525)).toBeNull();
+    expect(canonicalEncryptionForPort(8025)).toBeNull();
   });
 });
