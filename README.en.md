@@ -5,7 +5,7 @@
 [![Docker](https://img.shields.io/badge/ghcr-didacta--community-blue)](https://github.com/va360labs/didacta-io/pkgs/container/didacta-community)
 [![License](https://img.shields.io/badge/license-Sustainable%20Use%201.0-orange)](LICENSE)
 [![Versioning](https://img.shields.io/badge/versioning-SemVer-green)](https://semver.org)
-![Stage](https://img.shields.io/badge/stage-alpha-red)
+![Stage](https://img.shields.io/badge/stage-beta-orange)
 [![Web](https://img.shields.io/badge/web-didacta.io-black)](https://didacta.io)
 [![Built by VA360 LABS](https://img.shields.io/badge/built%20by-VA360%20LABS-1f2937)](https://va360labs.com)
 
@@ -27,9 +27,9 @@ project's original author.
 
 ## Current status
 
-🚧 **Alpha.** The product matured between May and July 2026 serving a real
+🧪 **Public beta** (`0.1.0-beta.N`). The product matured between May and July 2026 serving a real
 production deployment; since 31 July 2026 the repository is the whitelabel
-product and is preparing its first public release. Install, upgrade and
+product, and in August 2026 it entered public beta. Install, upgrade and
 versioning guides live at [docs.didacta.io](https://docs.didacta.io); the
 history of each version is in
 [Releases](https://github.com/va360labs/didacta-io/releases).
@@ -43,7 +43,8 @@ mirror (`didactaio/community`) exists but is **out of date** (it stopped at
 ## Check you can pull the image
 
 ```bash
-# ALWAYS pin a specific version; there is no `latest` tag.
+# ALWAYS pin a specific version: moving tags (`beta`) are for test
+# environments and `latest` will exist only for stable releases.
 docker pull ghcr.io/va360labs/didacta-community:<version>
 ```
 
@@ -203,7 +204,7 @@ run the application container.
 - The 3 required environment variables listed above.
 
 ```bash
-docker pull ghcr.io/va360labs/didacta-community:0.0.1-alpha.107
+docker pull ghcr.io/va360labs/didacta-community:0.1.0-beta.1
 
 # Volume for uploads plus the auto-generated encryption key.
 # It survives restarts.
@@ -221,7 +222,7 @@ docker run -d \
   -e STORAGE_ROOT=/app/data/storage \
   -e NODE_ENV=production \
   --restart unless-stopped \
-  ghcr.io/va360labs/didacta-community:0.0.1-alpha.107
+  ghcr.io/va360labs/didacta-community:0.1.0-beta.1
 ```
 
 > The `didacta_data` volume holds the uploaded files — courses, certificates
@@ -391,7 +392,7 @@ aggregated metrics and has opt-out and GDPR deletion from the panel itself.
 - **Cache and queues**: Redis 7 + BullMQ.
 - **Object storage**: S3-compatible (MinIO in compose, any S3 provider in
   production).
-- **AI**: pluggable layer — the current alpha uses an external LLM provider;
+- **AI**: pluggable layer — it currently uses an external LLM provider;
   future versions will allow switching providers.
 - **Monorepo**: Turborepo + pnpm workspaces.
 

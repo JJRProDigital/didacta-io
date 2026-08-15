@@ -46,6 +46,16 @@ jobs:
           VERSION="${REF#v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
+          # Guarda anti-desalineación: el tag debe coincidir con la versión
+          # que llevan los ficheros del repo (scripts/release-bump.sh la pone
+          # en todos). Un tag cortado sin bump publicaría una imagen cuyo
+          # /healthz y plantillas mienten — mejor fallar aquí, con nombre.
+          PKG="$(node -p "require('./package.json').version")"
+          if [[ "${PKG}" != "${VERSION}" ]]; then
+            echo "::error::El tag ${REF} no coincide con package.json (${PKG}). Corre scripts/release-bump.sh antes de tagear."
+            exit 1
+          fi
+
           # Detectar pre-release sufijo
           if [[ "${VERSION}" =~ -alpha\. ]]; then
             echo "channel=alpha" >> $GITHUB_OUTPUT
@@ -172,4 +182,5 @@ jobs:
 
             Guía de instalación paso a paso y política de versiones: <https://docs.didacta.io/instalacion/>.
 
-            ${{ steps.version.outputs.is_prerelease == 'true' && '⚠️ **Esta es una pre-release**. No usar en producción con datos reales.' || '' }}
+            ${{ steps.version.outputs.channel == 'alpha' && '⚠️ **Canal alpha**. No usar en producción con datos reales.' || '' }}
+            ${{ steps.version.outputs.channel == 'beta' && '🧪 **Canal beta**. Fija la versión concreta en tu despliegue, haz copia de seguridad antes de actualizar y lee las notas: puede haber cambios entre versiones.' || '' }}

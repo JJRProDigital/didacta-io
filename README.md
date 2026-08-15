@@ -5,7 +5,7 @@
 [![Docker](https://img.shields.io/badge/ghcr-didacta--community-blue)](https://github.com/va360labs/didacta-io/pkgs/container/didacta-community)
 [![License](https://img.shields.io/badge/license-Sustainable%20Use%201.0-orange)](LICENSE)
 [![Versioning](https://img.shields.io/badge/versioning-SemVer-green)](https://semver.org)
-![Stage](https://img.shields.io/badge/stage-alpha-red)
+![Stage](https://img.shields.io/badge/stage-beta-orange)
 [![Web](https://img.shields.io/badge/web-didacta.io-black)](https://didacta.io)
 [![Creado por VA360 LABS](https://img.shields.io/badge/creado%20por-VA360%20LABS-1f2937)](https://va360labs.com)
 
@@ -27,9 +27,9 @@ original del proyecto.
 
 ## Estado actual
 
-🚧 **Alpha.** El producto maduró entre mayo y julio de 2026 sirviendo en
+🧪 **Beta pública** (`0.1.0-beta.N`). El producto maduró entre mayo y julio de 2026 sirviendo en
 producción real a su primer despliegue; desde el 31 de julio de 2026 el repo
-es el producto whitelabel y prepara su primera versión pública. Guías de
+es el producto whitelabel, y en agosto de 2026 entró en beta pública. Guías de
 instalación, actualización y versionado en
 [docs.didacta.io](https://docs.didacta.io); el historial de cada versión, en
 [Releases](https://github.com/va360labs/didacta-io/releases).
@@ -44,7 +44,8 @@ Imagen oficial en GitHub Container Registry:
 ## Verificar acceso a la imagen
 
 ```bash
-# Fija SIEMPRE una versión concreta; no hay tag `latest`.
+# Fija SIEMPRE una versión concreta: los tags móviles (`beta`) son para
+# entornos de prueba y `latest` existirá solo para versiones estables.
 docker pull ghcr.io/va360labs/didacta-community:<versión>
 ```
 
@@ -193,7 +194,7 @@ Para operadores que ya tienen Postgres 16 + Redis 7 administrados y solo quieren
 - Las 3 variables de entorno obligatorias listadas arriba.
 
 ```bash
-docker pull ghcr.io/va360labs/didacta-community:0.0.1-alpha.107
+docker pull ghcr.io/va360labs/didacta-community:0.1.0-beta.1
 
 # Crear volumen para uploads + clave de cifrado autogenerada.
 # El volumen sobrevive a reinicios.
@@ -211,7 +212,7 @@ docker run -d \
   -e STORAGE_ROOT=/app/data/storage \
   -e NODE_ENV=production \
   --restart unless-stopped \
-  ghcr.io/va360labs/didacta-community:0.0.1-alpha.107
+  ghcr.io/va360labs/didacta-community:0.1.0-beta.1
 ```
 
 > El volumen `didacta_data` guarda los archivos subidos —cursos, certificados y evidencias— **y** una clave de cifrado autogenerada en el primer arranque para los secretos at-rest. Sin ese volumen montado, todo se borra al recrear el contenedor.
@@ -322,7 +323,7 @@ Aparte existe un **registro opt-in** voluntario (Administración → Registro) d
 - **Base de datos**: PostgreSQL 16 con Row-Level Security + Prisma.
 - **Cache / colas**: Redis 7 + BullMQ.
 - **Object storage**: S3-compatible (MinIO en compose, cualquier proveedor S3 en producción).
-- **IA**: capa pluggable — la alpha actual usa proveedor LLM externo; futuras versiones permitirán cambiar de proveedor.
+- **IA**: capa pluggable — hoy usa proveedor LLM externo; futuras versiones permitirán cambiar de proveedor.
 - **Monorepo**: Turborepo + pnpm workspaces.
 
 ## Licencia
