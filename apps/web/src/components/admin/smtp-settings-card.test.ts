@@ -10,7 +10,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { canonicalEncryptionForPort, smtpFormSchema } from './smtp-form-schema';
+import {
+  canonicalEncryptionForPort,
+  detectSmtpPreset,
+  SMTP_PRESETS,
+  smtpFormSchema,
+} from './smtp-form-schema';
 
 describe('smtpFormSchema', () => {
   const valid = {
@@ -104,5 +109,48 @@ describe('canonicalEncryptionForPort', () => {
   it('null en puertos sin convención (no pisa la elección del admin)', () => {
     expect(canonicalEncryptionForPort(2525)).toBeNull();
     expect(canonicalEncryptionForPort(8025)).toBeNull();
+  });
+});
+
+describe('SMTP_PRESETS', () => {
+  it('todos los presets pasan el schema del form al aplicarse', () => {
+    for (const p of SMTP_PRESETS) {
+      const result = smtpFormSchema.safeParse({
+        host: p.host,
+        port: p.port,
+        encryption: p.encryption,
+        username: p.username ?? 'usuario@dominio.com',
+        password: 'clave',
+        fromEmail: 'noreply@dominio.com',
+      });
+      expect(result.success, p.key).toBe(true);
+    }
+  });
+
+  it('el cifrado de cada preset coincide con la convención de su puerto', () => {
+    for (const p of SMTP_PRESETS) {
+      const canonical = canonicalEncryptionForPort(p.port);
+      if (canonical) expect(p.encryption, p.key).toBe(canonical);
+    }
+  });
+
+  it('cada preset se detecta a sí mismo por su propio host', () => {
+    for (const p of SMTP_PRESETS) {
+      expect(detectSmtpPreset(p.host), p.key).toBe(p.key);
+    }
+  });
+});
+
+describe('detectSmtpPreset', () => {
+  it('detecta variantes reales del host (regiones, mayúsculas, espacios)', () => {
+    expect(detectSmtpPreset('smtp.mailgun.org')).toBe('mailgun');
+    expect(detectSmtpPreset('email-smtp.us-east-1.amazonaws.com')).toBe('ses');
+    expect(detectSmtpPreset('  SMTP.GMAIL.COM  ')).toBe('gmail');
+  });
+
+  it('null con host propio, desconocido o vacío', () => {
+    expect(detectSmtpPreset('mail.mi-academia.com')).toBeNull();
+    expect(detectSmtpPreset('')).toBeNull();
+    expect(detectSmtpPreset('   ')).toBeNull();
   });
 });

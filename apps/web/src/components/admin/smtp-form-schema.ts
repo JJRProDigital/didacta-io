@@ -45,3 +45,95 @@ export function canonicalEncryptionForPort(port: number): SmtpFormValues['encryp
   if (port === 25 || port === 1025) return 'none';
   return null;
 }
+
+export type SmtpPresetKey = 'brevo' | 'gmail' | 'outlook' | 'ses' | 'mailgun' | 'sendgrid';
+
+export interface SmtpPreset {
+  key: SmtpPresetKey;
+  /** Nombre de marca — no se traduce. */
+  name: string;
+  host: string;
+  port: number;
+  encryption: SmtpFormValues['encryption'];
+  /** Username fijo que exige el proveedor (p. ej. «apikey» en SendGrid). */
+  username?: string;
+  /** Substrings del host que identifican al proveedor (detección). */
+  hostMatch: readonly string[];
+}
+
+/**
+ * Presets de los proveedores habituales (estilo FluentSMTP): rellenan
+ * host/puerto/cifrado — y el usuario cuando el proveedor lo fija — y enseñan
+ * la pista de credenciales que cada uno necesita (`smtp.presetHint.*` en el
+ * catálogo adminSso). Solo SMTP: las APIs propietarias de envío (Brevo API,
+ * SendGrid API…) quedan fuera a propósito.
+ *
+ * Hosts regionales (SES, Mailgun): se prerrellena la región EU — el público
+ * de Didacta — y la pista dice cómo cambiarla. Un preset editable que acierta
+ * el 90% gana a un campo vacío.
+ */
+export const SMTP_PRESETS: readonly SmtpPreset[] = [
+  {
+    key: 'brevo',
+    name: 'Brevo',
+    host: 'smtp-relay.brevo.com',
+    port: 587,
+    encryption: 'starttls',
+    hostMatch: ['brevo.com', 'sendinblue.com'],
+  },
+  {
+    key: 'gmail',
+    name: 'Gmail / Google Workspace',
+    host: 'smtp.gmail.com',
+    port: 587,
+    encryption: 'starttls',
+    hostMatch: ['gmail.com', 'googlemail.com'],
+  },
+  {
+    key: 'outlook',
+    name: 'Outlook / Microsoft 365',
+    host: 'smtp.office365.com',
+    port: 587,
+    encryption: 'starttls',
+    hostMatch: ['office365.com', 'outlook.com'],
+  },
+  {
+    key: 'ses',
+    name: 'Amazon SES',
+    host: 'email-smtp.eu-west-1.amazonaws.com',
+    port: 587,
+    encryption: 'starttls',
+    hostMatch: ['amazonaws.com'],
+  },
+  {
+    key: 'mailgun',
+    name: 'Mailgun',
+    host: 'smtp.eu.mailgun.org',
+    port: 587,
+    encryption: 'starttls',
+    hostMatch: ['mailgun.org'],
+  },
+  {
+    key: 'sendgrid',
+    name: 'SendGrid',
+    host: 'smtp.sendgrid.net',
+    port: 587,
+    encryption: 'starttls',
+    username: 'apikey',
+    hostMatch: ['sendgrid.net'],
+  },
+] as const;
+
+/**
+ * Identifica el proveedor a partir del host tecleado/guardado, para que la
+ * tarjeta resalte el preset y enseñe su pista también en configs que no
+ * nacieron del botón. null = host propio o proveedor desconocido.
+ */
+export function detectSmtpPreset(host: string): SmtpPresetKey | null {
+  const limpio = host.trim().toLowerCase();
+  if (!limpio) return null;
+  for (const preset of SMTP_PRESETS) {
+    if (preset.hostMatch.some((m) => limpio.includes(m))) return preset.key;
+  }
+  return null;
+}

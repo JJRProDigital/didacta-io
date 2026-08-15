@@ -56,8 +56,12 @@ import { formatDateTime } from '@/lib/i18n/format';
 import { labelOr } from '@/lib/i18n/labels';
 import {
   canonicalEncryptionForPort,
+  detectSmtpPreset,
+  SMTP_PRESETS,
   smtpFormSchema,
   type SmtpFormValues,
+  type SmtpPreset,
+  type SmtpPresetKey,
 } from './smtp-form-schema';
 
 // Re-export para que los tests existentes que ya importaban el schema desde
@@ -119,6 +123,9 @@ export function SmtpSettingsCard({
   const [testEmail, setTestEmail] = useState('');
   const [sendingTest, setSendingTest] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Proveedor detectado/elegido. Solo cosmético (chip resaltado + pista de
+  // credenciales): lo que se guarda es siempre el contenido de los campos.
+  const [preset, setPreset] = useState<SmtpPresetKey | null>(null);
 
   // Carga inicial del estado guardado.
   useEffect(() => {
@@ -137,6 +144,7 @@ export function SmtpSettingsCard({
           fromEmail: data.fromEmail ?? '',
           fromName: data.fromName ?? '',
         });
+        setPreset(detectSmtpPreset(data.host ?? ''));
         if (data.hasTenantConfig) onSaved?.();
       } catch (err) {
         if (cancelled) return;
@@ -228,6 +236,22 @@ export function SmtpSettingsCard({
     }
   }
 
+  /**
+   * Rellena host/puerto/cifrado (y el usuario si el proveedor lo fija) sin
+   * tocar contraseña ni remitente: el preset ahorra la parte mecánica, las
+   * credenciales siguen siendo del admin.
+   */
+  function aplicarPreset(p: SmtpPreset): void {
+    setPreset(p.key);
+    setForm((f) => ({
+      ...f,
+      host: p.host,
+      port: p.port,
+      encryption: p.encryption,
+      ...(p.username ? { username: p.username } : {}),
+    }));
+  }
+
   async function handleDelete(): Promise<void> {
     setDeleting(true);
     try {
@@ -245,6 +269,7 @@ export function SmtpSettingsCard({
         fromEmail: refreshed.fromEmail ?? '',
         fromName: refreshed.fromName ?? '',
       });
+      setPreset(detectSmtpPreset(refreshed.host ?? ''));
       setToast({
         variant: 'success',
         message: refreshed.hasGlobalFallback
@@ -281,6 +306,35 @@ export function SmtpSettingsCard({
 
         {dto ? <StatusBanner dto={dto} /> : <StatusBannerSkeleton />}
 
+        {/* Presets de proveedor (estilo FluentSMTP, feedback de usuarios):
+            un clic rellena la parte mecánica y la pista dice qué credenciales
+            pide ese proveedor — que es donde todo el mundo se atasca. */}
+        <div className="space-y-2">
+          <p className="text-sm font-medium">{t('smtp.presetsLabel')}</p>
+          <div className="flex flex-wrap gap-2">
+            {SMTP_PRESETS.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                aria-pressed={preset === p.key}
+                onClick={() => aplicarPreset(p)}
+                className={
+                  preset === p.key
+                    ? 'rounded-full border border-brand-500 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 ring-1 ring-brand-500'
+                    : 'rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text-muted transition-colors hover:border-brand-300 hover:text-text'
+                }
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
+          {preset ? (
+            <p className="text-xs text-text-subtle" data-testid="smtp-preset-hint">
+              {t(`smtp.presetHint.${preset}` as never)}
+            </p>
+          ) : null}
+        </div>
+
         <form onSubmit={handleSubmit} aria-busy={saving} className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="smtp-host">{t('smtp.hostLabel')}</Label>
@@ -288,7 +342,14 @@ export function SmtpSettingsCard({
               id="smtp-host"
               required
               value={form.host}
-              onChange={(e) => setForm({ ...form, host: e.target.value })}
+              onChange={(e) => {
+                const host = e.target.value;
+                setForm({ ...form, host });
+                // El chip sigue al host también cuando se teclea a mano, para
+                // que la pista de credenciales no se quede en un proveedor
+                // que ya no es el del formulario.
+                setPreset(detectSmtpPreset(host));
+              }}
               placeholder={t('smtp.hostPlaceholder')}
             />
           </div>

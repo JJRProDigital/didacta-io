@@ -207,6 +207,15 @@
     "deletedFallback": "Configuration deleted. The tenant now uses the host's global SMTP.",
     "deletedNoFallback": "Configuration deleted. Without SMTP no emails are sent — save a new one.",
     "deleteError": "We could not delete the configuration.",
+    "presetsLabel": "Common providers",
+    "presetHint": {
+      "brevo": "In Brevo, the username is your SMTP login (Settings → SMTP & API) and the password is your SMTP key — not your account password.",
+      "gmail": "Use your full address as the username and an app password (requires two-step verification). Your regular Google password won't work.",
+      "outlook": "Username: your full address. Newer Microsoft 365 accounts may need SMTP AUTH enabled in the admin center.",
+      "ses": "The prefilled host uses the eu-west-1 region: change it if your SES lives elsewhere. Username and password are SES SMTP credentials, not your IAM keys.",
+      "mailgun": "Username: postmaster@your-verified-domain. The prefilled host is the EU region; if your domain is in the US region, use smtp.mailgun.org.",
+      "sendgrid": "The username is literally \"apikey\" (already filled in); the password is a SendGrid API key with send permission."
+    },
     "hostLabel": "Host",
     "hostPlaceholder": "smtp-relay.brevo.com",
     "portLabel": "Port",
