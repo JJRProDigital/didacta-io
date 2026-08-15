@@ -9,7 +9,9 @@ import { useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'next-intl';
 import { Icon } from '@/components/icon';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { authStorage } from '@/lib/auth-storage';
+import { BRAND_REFERENCE_LIGHTNESS, hexToHsl, hslToHex } from '@/lib/color';
 import {
   publishThemeUpdate,
   themingApi,
@@ -45,6 +47,10 @@ interface Props {
   theme: TenantTheme | null;
   hue: number;
   onHue: (hue: number) => void;
+  /** Saturación de la marca: 70 con las muestras curadas; la que salga del hex
+   * pegado si el admin trae el código exacto de su marca. */
+  sat: number;
+  onSat: (sat: number) => void;
   /** Cómo se presenta la marca (solo logo / logo y nombre). Vive en la página
    * para que la cabecera del asistente lo refleje en vivo al elegirlo. */
   modo: LogoDisplayMode;
@@ -61,13 +67,26 @@ interface Props {
  * persiste al continuar, porque mientras se juega con la barra no hay un valor
  * «elegido» todavía.
  */
-export function PasoMarca({ academia, theme, hue, onHue, modo, onModo, onTheme }: Props) {
+export function PasoMarca({
+  academia,
+  theme,
+  hue,
+  onHue,
+  sat,
+  onSat,
+  modo,
+  onModo,
+  onTheme,
+}: Props) {
   const t = useTranslations('bienvenida');
   const inputRef = useRef<HTMLInputElement>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [quitando, setQuitando] = useState(false);
   const [errorLogo, setErrorLogo] = useState<string | null>(null);
   const [arrastrando, setArrastrando] = useState(false);
+  // Borrador del input hex: null = derivar de hue/sat; string = lo tecleado,
+  // que manda hasta que una muestra o la barra vuelvan a elegir color.
+  const [hexDraft, setHexDraft] = useState<string | null>(null);
 
   const logoUrl = theme?.logoUrl ?? null;
 
@@ -270,14 +289,20 @@ export function PasoMarca({ academia, theme, hue, onHue, modo, onModo, onTheme }
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {MUESTRAS.map((h) => {
-            const activo = h === hue;
+            const activo = h === hue && sat === 70;
             return (
               <button
                 key={h}
                 type="button"
                 aria-label={`hsl(${h})`}
                 aria-pressed={activo}
-                onClick={() => onHue(h)}
+                onClick={() => {
+                  // Las muestras están curadas para la saturación por defecto:
+                  // elegir una vuelve a 70 aunque antes se pegara un hex.
+                  onHue(h);
+                  onSat(70);
+                  setHexDraft(null);
+                }}
                 className={`h-9 w-9 rounded-full transition-transform hover:scale-110 ${
                   activo ? 'ring-2 ring-offset-2 ring-brand-500 scale-110' : ''
                 }`}
@@ -292,10 +317,38 @@ export function PasoMarca({ academia, theme, hue, onHue, modo, onModo, onTheme }
           max={360}
           value={hue}
           aria-label={t('marcaColorSlider')}
-          onChange={(e) => onHue(Number(e.target.value))}
+          onChange={(e) => {
+            onHue(Number(e.target.value));
+            setHexDraft(null);
+          }}
           className="slider-hue w-full"
-          style={{ ['--thumb-color' as string]: `hsl(${hue} 70% 45%)` }}
+          style={{ ['--thumb-color' as string]: `hsl(${hue} ${sat}% 45%)` }}
         />
+        {/* ¿Trae el código exacto de su marca? Se pega y listo: tono y
+            saturación salen del hex; la luminosidad la pone el tema y el
+            resultado se ve en la vista previa de abajo (feedback de usuarios). */}
+        <div className="flex items-center gap-2 pt-1">
+          <label htmlFor="marca-hex" className="text-sm text-text-muted">
+            {t('marcaColorHex')}
+          </label>
+          <Input
+            id="marca-hex"
+            type="text"
+            value={hexDraft ?? hslToHex(hue, sat, BRAND_REFERENCE_LIGHTNESS)}
+            onChange={(e) => {
+              const texto = e.target.value;
+              setHexDraft(texto);
+              const hsl = hexToHsl(texto);
+              if (hsl) {
+                onHue(hsl.h);
+                onSat(hsl.s);
+              }
+            }}
+            aria-invalid={hexDraft !== null && hexToHsl(hexDraft) === null}
+            placeholder="#1E5AA8"
+            className="max-w-36 font-mono"
+          />
+        </div>
       </section>
 
       {/* ------------------------------------------------ Vista previa */}
@@ -319,7 +372,7 @@ export function PasoMarca({ academia, theme, hue, onHue, modo, onModo, onTheme }
             ) : (
               <span
                 className="grid h-6 w-6 place-items-center rounded text-xs font-bold text-white"
-                style={{ backgroundColor: `hsl(${hue} 70% 45%)` }}
+                style={{ backgroundColor: `hsl(${hue} ${sat}% 45%)` }}
               >
                 {inicial}
               </span>
@@ -332,7 +385,7 @@ export function PasoMarca({ academia, theme, hue, onHue, modo, onModo, onTheme }
             {/* Barra lateral tintada con su color, como en el aula real. */}
             <div
               className="hidden w-28 shrink-0 flex-col gap-2 p-3 sm:flex"
-              style={{ backgroundColor: `hsl(${hue} 70% 12%)` }}
+              style={{ backgroundColor: `hsl(${hue} ${sat}% 12%)` }}
             >
               {[0.9, 0.45, 0.45].map((opacity, i) => (
                 <div
@@ -347,12 +400,12 @@ export function PasoMarca({ academia, theme, hue, onHue, modo, onModo, onTheme }
               <div className="rounded-lg border border-border bg-white p-3">
                 <div
                   className="mb-2 h-1.5 w-16 rounded-full"
-                  style={{ backgroundColor: `hsl(${hue} 70% 45%)` }}
+                  style={{ backgroundColor: `hsl(${hue} ${sat}% 45%)` }}
                 />
                 <p className="text-sm font-semibold">{t('marcaVistaCurso')}</p>
                 <span
                   className="mt-2 inline-block rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-                  style={{ backgroundColor: `hsl(${hue} 70% 45%)` }}
+                  style={{ backgroundColor: `hsl(${hue} ${sat}% 45%)` }}
                 >
                   {t('marcaVistaBoton')}
                 </span>

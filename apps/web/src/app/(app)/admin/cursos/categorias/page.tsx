@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
+import { ColorField, SUGGESTED_COLORS } from '@/components/color-field';
 import { Icon, type IconName } from '@/components/icon';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,17 +18,6 @@ import { authStorage } from '@/lib/auth-storage';
 import { invalidateCourseCategoriesCache } from '@/lib/course-categories';
 import { coursesApi, type CourseCategory } from '@/lib/courses';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
-
-const SUGGESTED_COLORS = [
-  '#1E5AA8',
-  '#18B5A8',
-  '#0D1B2A',
-  '#2E7DCE',
-  '#16A34A',
-  '#F59E0B',
-  '#FF6F61',
-  '#7C3AED',
-];
 
 const ICON_OPTIONS = [
   'book',
@@ -228,31 +218,12 @@ export default function CourseCategoriesAdminPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>{t('colorLabel')}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {SUGGESTED_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setForm((f) => ({ ...f, color: c }))}
-                      aria-label={t('colorAria', { color: c })}
-                      aria-pressed={form.color === c}
-                      className={
-                        form.color === c
-                          ? 'h-8 w-8 rounded-md ring-2 ring-brand-500 ring-offset-2 ring-offset-bg'
-                          : 'h-8 w-8 rounded-md ring-1 ring-border'
-                      }
-                      style={{ backgroundColor: c }}
-                    />
-                  ))}
-                </div>
-                <Input
-                  type="text"
+                <Label htmlFor="cat-color">{t('colorLabel')}</Label>
+                <ColorField
+                  id="cat-color"
                   value={form.color}
-                  onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
-                  pattern="^#[0-9a-fA-F]{6}$"
-                  required
-                  className="font-mono"
+                  onChange={(color) => setForm((f) => ({ ...f, color }))}
+                  swatchAriaLabel={(color) => t('colorAria', { color })}
                 />
               </div>
 

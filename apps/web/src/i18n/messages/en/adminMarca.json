@@ -10,6 +10,8 @@
     "saveError": "Could not save the theme",
     "colorTitle": "Brand color",
     "colorDescription": "You move the hue and the saturation; the 10 palette steps are derived automatically over HSL.",
+    "hexLabel": "Color code (hex)",
+    "hexHint": "Paste your brand's code (e.g. #1E5AA8): hue and saturation are taken from it, and each step's lightness comes from the scale. You can see the exact result in the preview.",
     "hueLabel": "Hue",
     "saturationLabel": "Saturation",
     "saturationHint": "Low saturations give pastel tones; high saturations, vibrant colors.",

@@ -8,6 +8,7 @@
 import { useTranslations } from 'next-intl';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { ColorField, SUGGESTED_COLORS } from '@/components/color-field';
 import { Icon, type IconName } from '@/components/icon';
 import { SpaceIcon } from '@/components/space-icon';
 import { Button } from '@/components/ui/button';
@@ -19,17 +20,6 @@ import {
   invalidateCommunitySpacesCache,
   COMMUNITY_SPACE_ICONS,
 } from '@/modules/community';
-
-const SUGGESTED_COLORS = [
-  '#1E5AA8',
-  '#18B5A8',
-  '#2E7DCE',
-  '#16A34A',
-  '#F59E0B',
-  '#FF6F61',
-  '#7C3AED',
-  '#0D1B2A',
-];
 
 function slugify(value: string): string {
   return value
@@ -55,7 +45,7 @@ export function CreateSpaceModal({ open, onClose }: Props) {
   const [iconMode, setIconMode] = useState<IconMode>('icon');
   const [selectedIcon, setSelectedIcon] = useState<string>('hash');
   const [emojiValue, setEmojiValue] = useState('');
-  const [color, setColor] = useState(SUGGESTED_COLORS[0]!);
+  const [color, setColor] = useState<string>(SUGGESTED_COLORS[0]!);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -226,26 +216,16 @@ export function CreateSpaceModal({ open, onClose }: Props) {
             )}
           </div>
 
-          {/* Color */}
+          {/* Color: mismas muestras que el resto de la app y, desde el lote de
+              feedback de onboarding, también el input hex que aquí faltaba. */}
           <div className="space-y-1.5">
-            <Label>{t('colorLabel')}</Label>
-            <div className="flex flex-wrap gap-2">
-              {SUGGESTED_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setColor(c)}
-                  aria-label={t('colorAria', { color: c })}
-                  aria-pressed={color === c}
-                  className={
-                    color === c
-                      ? 'h-7 w-7 rounded-full ring-2 ring-offset-2 ring-offset-surface'
-                      : 'h-7 w-7 rounded-full ring-1 ring-border hover:ring-border-strong'
-                  }
-                  style={{ backgroundColor: c, ['--tw-ring-color' as string]: c }}
-                />
-              ))}
-            </div>
+            <Label htmlFor="create-space-color">{t('colorLabel')}</Label>
+            <ColorField
+              id="create-space-color"
+              value={color}
+              onChange={setColor}
+              swatchAriaLabel={(c) => t('colorAria', { color: c })}
+            />
           </div>
 
           {/* Preview */}

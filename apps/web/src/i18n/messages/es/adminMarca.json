@@ -10,6 +10,8 @@
     "saveError": "No se pudo guardar el theme",
     "colorTitle": "Color de marca",
     "colorDescription": "Mueves el matiz y la saturación; los 10 escalones de la paleta se derivan automáticamente sobre HSL.",
+    "hexLabel": "Código de color (hex)",
+    "hexHint": "Pega el código de tu marca (p. ej. #1E5AA8): el matiz y la saturación se toman de él, y la luminosidad de cada escalón la pone la escala. El resultado exacto lo ves en la vista previa.",
     "hueLabel": "Matiz (hue)",
     "saturationLabel": "Saturación",
     "saturationHint": "Saturaciones bajas dan tonos pastel; saturaciones altas, colores vibrantes.",

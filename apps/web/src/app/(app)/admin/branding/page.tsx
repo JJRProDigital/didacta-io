@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { ApiHttpError } from '@/lib/api-client';
 import { authStorage } from '@/lib/auth-storage';
+import { BRAND_REFERENCE_LIGHTNESS, hexToHsl, hslToHex } from '@/lib/color';
 import { apiErrorMessage } from '@/lib/i18n/api-error';
 import { markupOr } from '@/lib/i18n/labels';
 import {
@@ -97,6 +98,11 @@ export default function BrandingPage() {
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [resetStatus, setResetStatus] = useState<'idle' | 'resetting'>('idle');
+  // Borrador del input hex. null = «derívalo de los sliders» (hslToHex del
+  // brand-500 actual); un string = lo que el admin está tecleando, que se
+  // respeta tal cual hasta que un slider vuelva a mandar. Sin useEffect: los
+  // dos caminos de escritura actualizan el borrador explícitamente.
+  const [hexDraft, setHexDraft] = useState<string | null>(null);
 
   useEffect(() => {
     const token = authStorage.getAccessToken();
@@ -151,6 +157,7 @@ export default function BrandingPage() {
       });
       setTheme(updated);
       setForm(themeToForm(updated));
+      setHexDraft(null);
       publishThemeUpdate(updated);
       setStatus('saved');
       setTimeout(() => setStatus('idle'), 2000);
@@ -169,6 +176,7 @@ export default function BrandingPage() {
       const fresh = await themingApi.reset(token);
       setTheme(fresh);
       setForm(themeToForm(fresh));
+      setHexDraft(null);
       publishThemeUpdate(fresh);
       setStatus('saved');
       setTimeout(() => setStatus('idle'), 2000);
@@ -230,6 +238,42 @@ export default function BrandingPage() {
               <CardDescription>{t('branding.colorDescription')}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
+              {/* Código hex de la marca (feedback de onboarding): del hex se
+                  toman tono y saturación; la luminosidad la fija la escala del
+                  tema, así que el resultado exacto se mira en la vista previa. */}
+              <div>
+                <Label htmlFor="brandHex">{t('branding.hexLabel')}</Label>
+                <div className="mt-2 flex items-center gap-3">
+                  <Input
+                    id="brandHex"
+                    type="text"
+                    value={
+                      hexDraft ??
+                      hslToHex(form.brandHue, form.brandSaturation, BRAND_REFERENCE_LIGHTNESS)
+                    }
+                    onChange={(e) => {
+                      const texto = e.target.value;
+                      setHexDraft(texto);
+                      const hsl = hexToHsl(texto);
+                      if (hsl) {
+                        setForm((f) => f && { ...f, brandHue: hsl.h, brandSaturation: hsl.s });
+                      }
+                    }}
+                    aria-invalid={hexDraft !== null && hexToHsl(hexDraft) === null}
+                    placeholder="#1E5AA8"
+                    className="max-w-44 font-mono"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="h-9 w-9 shrink-0 rounded-md border border-border"
+                    style={{
+                      backgroundColor: `hsl(${form.brandHue}, ${form.brandSaturation}%, ${BRAND_REFERENCE_LIGHTNESS}%)`,
+                    }}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-text-subtle">{t('branding.hexHint')}</p>
+              </div>
+
               <div>
                 <Label htmlFor="brandHue" className="flex items-center justify-between">
                   <span>{t('branding.hueLabel')}</span>
@@ -242,7 +286,10 @@ export default function BrandingPage() {
                   max={360}
                   step={1}
                   value={form.brandHue}
-                  onChange={(e) => setForm((f) => f && { ...f, brandHue: Number(e.target.value) })}
+                  onChange={(e) => {
+                    setHexDraft(null);
+                    setForm((f) => f && { ...f, brandHue: Number(e.target.value) });
+                  }}
                   className="mt-2 h-2 w-full cursor-pointer appearance-none rounded-full"
                   style={{
                     background:
@@ -295,9 +342,10 @@ export default function BrandingPage() {
                   max={100}
                   step={1}
                   value={form.brandSaturation}
-                  onChange={(e) =>
-                    setForm((f) => f && { ...f, brandSaturation: Number(e.target.value) })
-                  }
+                  onChange={(e) => {
+                    setHexDraft(null);
+                    setForm((f) => f && { ...f, brandSaturation: Number(e.target.value) });
+                  }}
                   className="mt-2 h-2 w-full cursor-pointer appearance-none rounded-full bg-surface-3"
                 />
                 <p className="mt-2 text-xs text-text-subtle">{t('branding.saturationHint')}</p>

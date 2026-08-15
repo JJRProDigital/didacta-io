@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'next-intl';
+import { ColorField, SUGGESTED_COLORS } from '@/components/color-field';
 import { Icon, type IconName } from '@/components/icon';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -22,21 +23,6 @@ import {
   type CommunityTag,
   type CommunityTagIcon,
 } from '@/modules/community';
-
-/**
- * Paleta sugerida para que el admin no tenga que tipear hex a mano.
- * Coincide con la paleta de marca + 3 acentos cálidos.
- */
-const SUGGESTED_COLORS = [
-  '#1E5AA8', // Azul confianza
-  '#18B5A8', // Teal acento
-  '#0D1B2A', // Noche
-  '#2E7DCE', // Azul info
-  '#16A34A', // Verde éxito
-  '#F59E0B', // Ámbar
-  '#FF6F61', // Coral
-  '#7C3AED', // Violeta
-];
 
 interface FormState {
   name: string;
@@ -231,32 +217,12 @@ export default function CommunityTagsAdminPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>{t('tags.colorLabel')}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {SUGGESTED_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setForm((f) => ({ ...f, color: c }))}
-                      aria-label={t('tags.colorAria', { value: c })}
-                      aria-pressed={form.color === c}
-                      className={
-                        form.color === c
-                          ? 'h-8 w-8 rounded-md ring-2 ring-brand-500 ring-offset-2 ring-offset-bg'
-                          : 'h-8 w-8 rounded-md ring-1 ring-border'
-                      }
-                      style={{ backgroundColor: c }}
-                    />
-                  ))}
-                </div>
-                <Input
-                  type="text"
+                <Label htmlFor="tag-color">{t('tags.colorLabel')}</Label>
+                <ColorField
+                  id="tag-color"
                   value={form.color}
-                  onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
-                  pattern="^#[0-9a-fA-F]{6}$"
-                  required
-                  placeholder="#1E5AA8"
-                  className="font-mono"
+                  onChange={(color) => setForm((f) => ({ ...f, color }))}
+                  swatchAriaLabel={(value) => t('tags.colorAria', { value })}
                 />
               </div>
 
