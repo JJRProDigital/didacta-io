@@ -62,6 +62,21 @@
     "body": "without an SMTP server your users get no email at all.",
     "cta": "Set up"
   },
+  "gettingStarted": {
+    "title": "First steps",
+    "subtitle": "{done} of {total} — what your academy still needs to run at full speed.",
+    "doneTitle": "Your academy is ready!",
+    "doneBody": "All first steps are complete. You can hide this card.",
+    "dismiss": "Hide",
+    "item": {
+      "nombre": "Name your academy",
+      "marca": "Upload your logo",
+      "curso": "Create your first course",
+      "alumnos": "Invite your students",
+      "cobros": "Connect payments (Stripe)",
+      "correo": "Set up email (SMTP)"
+    }
+  },
   "supportAccessBanner": {
     "title": "Support access active.",
     "body": "Someone from support is inside this space. Reason: {reason}",

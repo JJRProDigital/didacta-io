@@ -62,6 +62,21 @@
     "body": "sin servidor SMTP tus usuarios no reciben ningún correo.",
     "cta": "Configurar"
   },
+  "gettingStarted": {
+    "title": "Primeros pasos",
+    "subtitle": "{done} de {total} — lo que le falta a tu academia para estar a pleno rendimiento.",
+    "doneTitle": "¡Tu academia está lista!",
+    "doneBody": "Todos los primeros pasos están completados. Puedes ocultar esta tarjeta.",
+    "dismiss": "Ocultar",
+    "item": {
+      "nombre": "Ponle nombre a tu academia",
+      "marca": "Sube tu logo",
+      "curso": "Crea tu primer curso",
+      "alumnos": "Invita a tus alumnos",
+      "cobros": "Conecta los cobros (Stripe)",
+      "correo": "Configura el correo (SMTP)"
+    }
+  },
   "supportAccessBanner": {
     "title": "Acceso de soporte activo.",
     "body": "Alguien de soporte está dentro de este espacio. Motivo: {reason}",
