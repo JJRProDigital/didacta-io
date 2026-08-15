@@ -12,10 +12,13 @@
 # y release.yml ahora ABORTA si el tag no coincide con package.json — este
 # script es la otra mitad de esa guarda.
 #
-# Uso (desde la raíz del repo):
-#   bash scripts/release-bump.sh 0.1.0-beta.2
-#   git add -A && git commit -m "chore(release): 0.1.0-beta.2"
-#   git tag v0.1.0-beta.2 && git push origin develop v0.1.0-beta.2
+# Uso (desde la raíz del repo) — <V> es la versión nueva, sin 'v'. El ejemplo
+# es un placeholder A PROPÓSITO: con una versión real, la verificación de
+# fósiles de este mismo script se caza a sí misma en cuanto esa versión pasa
+# a ser la vieja (pasó cortando la beta.3).
+#   bash scripts/release-bump.sh <V>
+#   git add -A && git commit -m "chore(release): <V>"
+#   git tag v<V> && git push origin develop v<V>
 set -euo pipefail
 
 NEW="${1:?uso: release-bump.sh <version-nueva, sin 'v'>}"
