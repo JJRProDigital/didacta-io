@@ -690,6 +690,9 @@ describe('BillingService — handleWebhookEvent (idempotente)', () => {
           amount_total: 1999,
           customer_email: 'u@test',
           customer_details: { email: 'u@test' },
+          // Stripe SIEMPRE lo manda en una Checkout Session. Va explícito
+          // porque el fulfillment falla cerrado: sin este campo no matricula.
+          payment_status: 'paid',
           status: 'complete',
         } as unknown as Stripe.Checkout.Session,
       },
@@ -917,6 +920,137 @@ describe('BillingService — handleWebhookEvent (idempotente)', () => {
     expect(publisher.events[0]!.name).toBe('billing.order.failed');
   });
 
+  // --- Pago de notificación diferida (SEPA, transferencia): el dinero primero ---
+  //
+  // Todo este bloque protege el mismo fallo: `checkout.session.completed`
+  // significa "terminó el formulario", no "hemos cobrado". Mientras el
+  // checkout solo aceptó tarjeta el problema fue inalcanzable; en cuanto se
+  // abran más métodos de pago, es la diferencia entre vender y regalar.
+
+  /** Sesión de un pago diferido: el comprador terminó, pero el dinero no está. */
+  function unpaidCompletedEvent(orderId: string, eventId: string): Stripe.Event {
+    return {
+      id: eventId,
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_sepa',
+          metadata: {
+            orderId,
+            tenantId: 't1',
+            userId: 'u1',
+            courseId: 'course-1',
+            productId: 'prod-1',
+          },
+          amount_total: 1999,
+          customer_email: 'u@test',
+          customer_details: { email: 'u@test' },
+          payment_intent: 'pi_sepa_1',
+          payment_status: 'unpaid',
+          status: 'complete',
+        } as unknown as Stripe.Checkout.Session,
+      },
+    } as Stripe.Event;
+  }
+
+  async function pedidoConPagoDiferidoEnCurso(): Promise<string> {
+    stripe.setPrice('price_a');
+    await svc.createProduct({ tenantId: 't1', courseId: 'course-1', stripePriceId: 'price_a' });
+    const checkout = await svc.startCheckout({
+      tenantId: 't1',
+      userId: 'u1',
+      userEmail: 'u@test',
+      courseId: 'course-1',
+    });
+    publisher.events = [];
+    await svc.handleWebhookEvent(unpaidCompletedEvent(checkout.orderId, 'evt_unpaid'), {});
+    return checkout.orderId;
+  }
+
+  it('completed con payment_status unpaid NO matricula: la order sigue PENDING', async () => {
+    const orderId = await pedidoConPagoDiferidoEnCurso();
+
+    expect(prisma.orders.get(orderId)!.status).toBe('PENDING');
+    expect(publisher.events).toHaveLength(0);
+  });
+
+  it('completed con payment_status unpaid guarda ya el PaymentIntent (para reconocer un reembolso)', async () => {
+    const orderId = await pedidoConPagoDiferidoEnCurso();
+
+    const stored = prisma.orders.get(orderId)!;
+    expect(stored.stripePaymentIntentId).toBe('pi_sepa_1');
+    expect(stored.customerEmail).toBe('u@test');
+  });
+
+  it('async_payment_succeeded completa la order y emite ORDER_COMPLETED', async () => {
+    const orderId = await pedidoConPagoDiferidoEnCurso();
+
+    const cobrado = unpaidCompletedEvent(orderId, 'evt_sepa_ok');
+    (cobrado as { type: string }).type = 'checkout.session.async_payment_succeeded';
+    (cobrado.data.object as { payment_status: string }).payment_status = 'paid';
+    await svc.handleWebhookEvent(cobrado, {});
+
+    expect(prisma.orders.get(orderId)!.status).toBe('COMPLETED');
+    expect(publisher.events).toHaveLength(1);
+    expect(publisher.events[0]!.name).toBe('billing.order.completed');
+  });
+
+  it('async_payment_failed sobre una order YA completada retira el acceso, no la ignora', async () => {
+    stripe.setPrice('price_a');
+    await svc.createProduct({ tenantId: 't1', courseId: 'course-1', stripePriceId: 'price_a' });
+    const checkout = await svc.startCheckout({
+      tenantId: 't1',
+      userId: 'u1',
+      userEmail: 'u@test',
+      courseId: 'course-1',
+    });
+    await svc.handleWebhookEvent(buildSessionCompletedEvent(checkout.orderId), {});
+    publisher.events = [];
+
+    await svc.handleWebhookEvent(
+      {
+        id: 'evt_fail_tardio',
+        type: 'checkout.session.async_payment_failed',
+        data: {
+          object: {
+            id: 'cs_xyz',
+            metadata: { orderId: checkout.orderId },
+            status: 'open',
+          } as unknown as Stripe.Checkout.Session,
+        },
+      } as Stripe.Event,
+      {},
+    );
+
+    expect(prisma.orders.get(checkout.orderId)!.status).toBe('FAILED');
+    // Se revoca por el canal de reembolso, que es el único que cancela la
+    // matrícula de compra. `amountRefunded: 0` porque nunca entró el dinero.
+    expect(publisher.events).toHaveLength(1);
+    expect(publisher.events[0]!.name).toBe('billing.order.refunded');
+    expect(publisher.events[0]!.payload.amountRefunded).toBe(0);
+  });
+
+  it('no_payment_required (código promocional del 100%) SÍ matricula: es compra válida y gratis', async () => {
+    stripe.setPrice('price_a');
+    await svc.createProduct({ tenantId: 't1', courseId: 'course-1', stripePriceId: 'price_a' });
+    const checkout = await svc.startCheckout({
+      tenantId: 't1',
+      userId: 'u1',
+      userEmail: 'u@test',
+      courseId: 'course-1',
+    });
+    publisher.events = [];
+
+    const gratis = buildSessionCompletedEvent(checkout.orderId);
+    (gratis.data.object as { payment_status: string; amount_total: number }).payment_status =
+      'no_payment_required';
+    (gratis.data.object as { payment_status: string; amount_total: number }).amount_total = 0;
+    await svc.handleWebhookEvent(gratis, {});
+
+    expect(prisma.orders.get(checkout.orderId)!.status).toBe('COMPLETED');
+    expect(publisher.events[0]!.name).toBe('billing.order.completed');
+  });
+
   it('checkout logueado: el fulfillment NO llama al provisioner (la order ya tiene dueño)', async () => {
     stripe.setPrice('price_a');
     await svc.createProduct({ tenantId: 't1', courseId: 'course-1', stripePriceId: 'price_a' });
@@ -994,6 +1128,7 @@ describe('BillingService — checkout PÚBLICO (viaje 2: visitante sin cuenta)',
               ? { email: null }
               : { email: opts?.email ?? ' Compradora@Example.COM ', name: opts?.name ?? 'Ana' },
           payment_intent: 'pi_anon_1',
+          payment_status: 'paid',
           status: 'complete',
         } as unknown as Stripe.Checkout.Session,
       },

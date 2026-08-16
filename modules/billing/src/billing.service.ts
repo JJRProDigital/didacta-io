@@ -588,6 +588,7 @@ export class BillingService {
   async resolveWebhookTenantId(event: Stripe.Event): Promise<string | null> {
     switch (event.type) {
       case 'checkout.session.completed':
+      case 'checkout.session.async_payment_succeeded':
       case 'checkout.session.expired':
       case 'checkout.session.async_payment_failed': {
         const session = event.data.object as Stripe.Checkout.Session;
@@ -663,7 +664,13 @@ export class BillingService {
 
     try {
       switch (event.type) {
+        // El mismo handler para los dos: `completed` es el final del camino
+        // cuando el método de pago es inmediato (tarjeta), y `async_payment_
+        // succeeded` es el final cuando es de notificación diferida (SEPA,
+        // transferencia…). En ambos, la sesión llega ya con el dinero
+        // confirmado; quien decide es `isPaymentSettled`, no el tipo de evento.
         case 'checkout.session.completed':
+        case 'checkout.session.async_payment_succeeded':
           await this.onCheckoutCompleted(
             event.data.object as Stripe.Checkout.Session,
             opts?.provisionUser,
@@ -725,6 +732,35 @@ export class BillingService {
     // Idempotencia adicional: si la order ya está COMPLETED (por reentrega),
     // no re-emitimos evento ni re-actualizamos.
     if (order.status === 'COMPLETED') return;
+
+    // EL DINERO PRIMERO. `checkout.session.completed` significa que la persona
+    // terminó el formulario, NO que hayamos cobrado: con un método de
+    // notificación diferida (SEPA, transferencia) el evento llega con
+    // `payment_status: 'unpaid'` y el cobro se confirma —o falla— minutos u
+    // horas después, en `async_payment_succeeded` / `async_payment_failed`.
+    //
+    // Sin esta guarda, matriculábamos ahí mismo. No se había notado nunca
+    // porque el checkout solo aceptaba tarjeta, que es inmediata: la línea
+    // `payment_method_types: ['card']` era lo único que sostenía esto. En
+    // cuanto se abran otros métodos de pago, sin esta guarda se regala el
+    // curso a quien inicie una transferencia y no la haga.
+    //
+    // Dejamos la order en PENDING y guardamos ya el PaymentIntent y el email:
+    // no dan acceso a nada, y sin el PaymentIntent un reembolso posterior
+    // sería irreconocible (ver `onChargeRefunded`).
+    if (!isPaymentSettled(session)) {
+      await this.prisma.modBillingOrder.update({
+        where: { id: order.id },
+        data: {
+          customerEmail: session.customer_details?.email ?? session.customer_email ?? null,
+          stripePaymentIntentId:
+            typeof session.payment_intent === 'string'
+              ? session.payment_intent
+              : (session.payment_intent?.id ?? null),
+        },
+      });
+      return;
+    }
 
     // Comprador: la FILA de la order es la fuente de verdad (checkout logueado
     // la trae rellena). En el checkout público llega null: se materializa aquí
@@ -795,6 +831,35 @@ export class BillingService {
     if (!orderId) return;
     const order = await this.prisma.modBillingOrder.findUnique({ where: { id: orderId } });
     if (!order) return;
+
+    // Red de seguridad: un pago que falla sobre una compra YA completada.
+    // Con la guarda de `isPaymentSettled` esto no debería ocurrir nunca —
+    // Stripe no manda `async_payment_failed` de una sesión que llegó a
+    // `paid`—, pero el `return` mudo que había aquí es exactamente lo que
+    // convertía el fallo anterior en invisible: la order se quedaba COMPLETED
+    // y el alumno dentro, sin rastro. Ante la duda, el acceso se retira: si
+    // el dinero no está, el curso no se da.
+    //
+    // Se reutiliza `billing.order.refunded` porque es el único canal de
+    // revocación que existe (lo escucha BillingRefundBridge, que cancela la
+    // matrícula de origen COMPRA y es idempotente). `amountRefunded: 0` dice
+    // la verdad: no se devolvió nada porque nunca llegó a entrar.
+    if (order.status === 'COMPLETED') {
+      if (session.status === 'expired') return; // sesión caducada de una compra pagada: ruido.
+      await this.prisma.modBillingOrder.update({
+        where: { id: order.id },
+        data: { status: 'FAILED' },
+      });
+      await this.publisher.publish(order.tenantId, order.userId, EVENT.ORDER_REFUNDED, {
+        orderId: order.id,
+        productId: order.productId,
+        courseId: order.courseId,
+        userId: order.userId,
+        amountRefunded: 0,
+      });
+      return;
+    }
+
     if (order.status !== 'PENDING') return;
 
     const next = session.status === 'expired' ? 'CANCELLED' : 'FAILED';
@@ -859,6 +924,22 @@ export class BillingService {
 }
 
 // ---------------- helpers ----------------
+
+/**
+ * ¿El dinero de esta sesión está confirmado?
+ *
+ * `paid` es lo normal. `no_payment_required` es un total de 0 €, que desde que
+ * la venta de cursos acepta códigos promocionales ocurre de verdad: un código
+ * del 100% deja el importe a cero. Es una compra válida y gratuita, no un
+ * impago, y tiene que matricular igual.
+ *
+ * Cualquier otra cosa —`unpaid`, o el campo ausente— cuenta como NO cobrado.
+ * Falla cerrado a propósito: entre matricular de más y matricular de menos,
+ * lo segundo se arregla con un reintento y lo primero regala el curso.
+ */
+function isPaymentSettled(session: Stripe.Checkout.Session): boolean {
+  return session.payment_status === 'paid' || session.payment_status === 'no_payment_required';
+}
 
 /** Proyección de una fila de producto a la opción de compra que ve el alumno. */
 function toOfferOption(o: BillingProductRow): CourseOfferOption {
