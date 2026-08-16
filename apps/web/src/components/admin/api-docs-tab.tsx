@@ -54,6 +54,18 @@ const ENDPOINTS = [
     whatKey: 'docs.whatCourses',
   },
   {
+    method: 'GET',
+    path: '/api/v1/integrations/courses/{courseId}',
+    scope: 'courses:read',
+    whatKey: 'docs.whatIntegrationCourse',
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/integrations/learners/state',
+    scope: 'enrollments:read',
+    whatKey: 'docs.whatLearnerState',
+  },
+  {
     method: 'POST',
     path: '/api/v1/community-api/posts',
     scope: 'community:post',

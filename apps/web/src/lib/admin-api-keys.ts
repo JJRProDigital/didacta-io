@@ -8,7 +8,12 @@
 import { apiFetch } from './api-client';
 
 /** Scopes que el admin puede otorgar. Debe coincidir con ALLOWED_API_KEY_SCOPES del backend. */
-export const API_KEY_SCOPES = ['enrollments:write', 'courses:read', 'community:post'] as const;
+export const API_KEY_SCOPES = [
+  'enrollments:write',
+  'enrollments:read',
+  'courses:read',
+  'community:post',
+] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 export interface TenantApiKey {

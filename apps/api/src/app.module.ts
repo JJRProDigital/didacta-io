@@ -14,6 +14,7 @@ import { AuthModule } from './auth/auth.module';
 import { BrandingModule } from './branding/branding.module';
 import { HealthModule } from './health/health.module';
 import { InscribeModule } from './enrollment/inscribe.module';
+import { IntegrationsModule } from './integrations/integrations.module';
 import { ApiLicenseModule } from './license/license.module';
 import { LicenseAdminModule } from './license/license-admin.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
@@ -114,6 +115,11 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     // ModulesModule porque reusa ModuleRegistryService (mod.learning) y de
     // AuthModule (JwtOrApiKeyGuard + creación de usuario + SMTP).
     InscribeModule,
+    // Lectura para integradores externos (`GET /api/v1/integrations/…`): la
+    // otra mitad de InscribeModule. Permite que un sitio de fuera pinte la
+    // ficha de un curso con datos de Didacta y sepa si quien la mira ya es
+    // alumno. Mismas dependencias que InscribeModule, por lo mismo.
+    IntegrationsModule,
     // Inscripción de miembros (verificadores componibles + validación manual).
     // Host de mod.member-registration (la lógica portable vive en
     // modules/member-registration/); reusa AuthModule (PasswordService, SMTP,

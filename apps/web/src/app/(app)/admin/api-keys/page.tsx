@@ -101,6 +101,8 @@ function KeysTab() {
     switch (scope) {
       case 'enrollments:write':
         return t('keys.scopeEnrollmentsWrite');
+      case 'enrollments:read':
+        return t('keys.scopeEnrollmentsRead');
       case 'courses:read':
         return t('keys.scopeCoursesRead');
       case 'community:post':

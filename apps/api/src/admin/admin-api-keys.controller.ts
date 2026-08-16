@@ -30,11 +30,18 @@ import { PrismaAuditLogService } from '../modules/prisma-audit-log.service';
 /**
  * Scopes que el admin puede otorgar a una API key desde el panel. Mantener
  * acotado evita que el panel cree claves con permisos arbitrarios. Casos de
- * uso: inscripción externa (`POST /api/v1/inscribe`) y publicación en la
- * comunidad (`POST /api/v1/community-api/posts`).
+ * uso: inscripción externa (`POST /api/v1/inscribe`), lectura del catálogo y
+ * del estado del alumno para pintar fichas fuera de Didacta
+ * (`GET /api/v1/integrations/…`) y publicación en la comunidad
+ * (`POST /api/v1/community-api/posts`).
+ *
+ * `enrollments:read` va aparte de `enrollments:write` porque permite consultar
+ * el estado de CUALQUIER email del tenant: quien solo necesita pintar una
+ * ficha de venta no tiene por qué poder matricular, y al revés.
  */
 export const ALLOWED_API_KEY_SCOPES = [
   'enrollments:write',
+  'enrollments:read',
   'courses:read',
   'community:post',
 ] as const;
