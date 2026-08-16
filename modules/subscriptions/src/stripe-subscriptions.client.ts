@@ -132,7 +132,15 @@ export class SubscriptionsStripeSdkAdapter implements SubscriptionsStripeAdapter
       const trialDays = p.trialDays && p.trialDays > 0 ? p.trialDays : undefined;
       const session = await this.client.checkout.sessions.create({
         mode: 'subscription',
-        payment_method_types: ['card'],
+        // SIN `payment_method_types`, igual que mod.billing: Stripe ofrece lo
+        // que cada tenant tenga activado en SU dashboard, y filtra solo lo que
+        // sirve para cobros recurrentes en esa moneda. La decisión vuelve al
+        // comerciante en vez de exigir una release de Didacta.
+        //
+        // Depende de que `fulfillMembershipCheckout` exija cobro resuelto y de
+        // que PENDING → ACTIVE conceda el acceso. Hasta que esas dos cosas
+        // existieron, abrir métodos de notificación diferida daba la membresía
+        // sin cobrar y, cuando el cobro entraba, no la daba nunca.
         line_items: [{ price: p.priceId, quantity: 1 }],
         success_url: p.successUrl,
         cancel_url: p.cancelUrl,

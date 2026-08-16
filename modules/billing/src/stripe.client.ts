@@ -152,11 +152,8 @@ export class StripeSdkAdapter implements StripeAdapter {
         // `payment_status` cobrado: al abrir métodos de notificación diferida
         // (SEPA, transferencia), `checkout.session.completed` empieza a llegar
         // con el dinero todavía en el aire. Si alguien revierte aquella
-        // guarda, hay que volver a poner esta línea el mismo día.
-        //
-        // mod.subscriptions sigue restringido a tarjeta a propósito: su
-        // fulfillment de membresía crea la fila ACTIVE sin mirar el pago, así
-        // que allí abrir métodos todavía regalaría acceso.
+        // guarda, hay que volver a poner esta línea el mismo día. En
+        // mod.subscriptions rige lo mismo, con su propia guarda equivalente.
         line_items: [{ price: p.priceId, quantity: 1 }],
         success_url: p.successUrl,
         cancel_url: p.cancelUrl,
