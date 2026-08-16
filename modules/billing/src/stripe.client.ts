@@ -142,7 +142,21 @@ export class StripeSdkAdapter implements StripeAdapter {
     try {
       const session = await this.client.checkout.sessions.create({
         mode: 'payment',
-        payment_method_types: ['card'],
+        // SIN `payment_method_types`: omitirlo hace que Stripe ofrezca los
+        // métodos que cada tenant tenga activados en SU dashboard. "Qué formas
+        // de pago acepto" deja de ser una decisión del código —que obligaba a
+        // una release para añadir PayPal o Bizum— y pasa a ser del comerciante,
+        // que es de quien siempre fue.
+        //
+        // Esto solo es seguro desde que `onCheckoutCompleted` exige
+        // `payment_status` cobrado: al abrir métodos de notificación diferida
+        // (SEPA, transferencia), `checkout.session.completed` empieza a llegar
+        // con el dinero todavía en el aire. Si alguien revierte aquella
+        // guarda, hay que volver a poner esta línea el mismo día.
+        //
+        // mod.subscriptions sigue restringido a tarjeta a propósito: su
+        // fulfillment de membresía crea la fila ACTIVE sin mirar el pago, así
+        // que allí abrir métodos todavía regalaría acceso.
         line_items: [{ price: p.priceId, quantity: 1 }],
         success_url: p.successUrl,
         cancel_url: p.cancelUrl,
