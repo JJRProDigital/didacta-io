@@ -22,6 +22,7 @@ import {
   StripeConfigMissingError,
   WebhookSignatureInvalidError,
 } from './errors.js';
+import { currentPeriodEndFromSubscription } from './stripe-shape.js';
 
 export interface SubscriptionsStripeAdapter {
   createCheckoutSession(
@@ -192,7 +193,7 @@ export class SubscriptionsStripeSdkAdapter implements SubscriptionsStripeAdapter
         id: sub.id,
         status: sub.status,
         cancelAtPeriodEnd: sub.cancel_at_period_end,
-        currentPeriodEnd: sub.current_period_end ?? null,
+        currentPeriodEnd: currentPeriodEndFromSubscription(sub),
         canceledAt: sub.canceled_at ?? null,
         latestInvoicePaid: invoice?.status === 'paid',
       };
@@ -253,7 +254,7 @@ export class SubscriptionsStripeSdkAdapter implements SubscriptionsStripeAdapter
         id: sub.id,
         status: sub.status,
         cancelAtPeriodEnd: sub.cancel_at_period_end,
-        currentPeriodEnd: sub.current_period_end ?? null,
+        currentPeriodEnd: currentPeriodEndFromSubscription(sub),
         canceledAt: sub.canceled_at ?? null,
       };
     } catch (err) {

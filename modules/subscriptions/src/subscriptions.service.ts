@@ -51,6 +51,11 @@ import {
   StripeApiError,
 } from './errors.js';
 import type { SubscriptionsStripeAdapter } from './stripe-subscriptions.client.js';
+import {
+  currentPeriodEndFromSubscription,
+  subscriptionIdFromInvoice,
+  toDateOrNull,
+} from './stripe-shape.js';
 
 /** Resuelve el SubscriptionsStripeAdapter a usar para un tenant concreto, por llamada. */
 export type SubscriptionsStripeAdapterResolver = (
@@ -326,9 +331,8 @@ export class SubscriptionsService {
       case 'invoice.paid':
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice;
-        if (!invoice.subscription) return null;
-        const stripeSubId =
-          typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription.id;
+        const stripeSubId = subscriptionIdFromInvoice(invoice);
+        if (!stripeSubId) return null;
         const sub = await this.prisma.modSubscriptionsSubscription.findUnique({
           where: { stripeSubscriptionId: stripeSubId },
           select: { tenantId: true },
@@ -502,9 +506,7 @@ export class SubscriptionsService {
         stripeCustomerId:
           typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer.id,
         status,
-        currentPeriodEnd: stripeSub.current_period_end
-          ? new Date(stripeSub.current_period_end * 1000)
-          : null,
+        currentPeriodEnd: toDateOrNull(currentPeriodEndFromSubscription(stripeSub)),
         trialEndsAt: stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000) : null,
       },
     });
@@ -554,9 +556,7 @@ export class SubscriptionsService {
     const data: Record<string, unknown> = {
       status: newStatus,
       cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
-      currentPeriodEnd: stripeSub.current_period_end
-        ? new Date(stripeSub.current_period_end * 1000)
-        : null,
+      currentPeriodEnd: toDateOrNull(currentPeriodEndFromSubscription(stripeSub)),
     };
     if (newStatus === 'TRIALING') {
       // Conservamos trialEndsAt existente si Stripe ya lo puso a null (trial
@@ -652,9 +652,8 @@ export class SubscriptionsService {
   }
 
   private async onInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
-    if (!invoice.subscription) return;
-    const stripeSubId =
-      typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription.id;
+    const stripeSubId = subscriptionIdFromInvoice(invoice);
+    if (!stripeSubId) return;
     const sub = await this.prisma.modSubscriptionsSubscription.findUnique({
       where: { stripeSubscriptionId: stripeSubId },
     });
@@ -730,9 +729,8 @@ export class SubscriptionsService {
   }
 
   private async onInvoicePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
-    if (!invoice.subscription) return;
-    const stripeSubId =
-      typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription.id;
+    const stripeSubId = subscriptionIdFromInvoice(invoice);
+    if (!stripeSubId) return;
     const sub = await this.prisma.modSubscriptionsSubscription.findUnique({
       where: { stripeSubscriptionId: stripeSubId },
     });

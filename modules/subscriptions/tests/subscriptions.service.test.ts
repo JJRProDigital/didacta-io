@@ -419,6 +419,26 @@ function makeStripeInvoice(over: Partial<Stripe.Invoice> = {}): Stripe.Invoice {
   } as unknown as Stripe.Invoice;
 }
 
+/**
+ * La MISMA invoice tal y como la entrega Stripe con una versión de API
+ * moderna: sin `subscription` en la raíz, colgando de
+ * `parent.subscription_details.subscription`.
+ *
+ * No es hipotético. La cuenta real entregaba `2025-12-15.clover` mientras el
+ * SDK fijaba `2024-12-18.acacia` para las llamadas, y por ahí se perdieron en
+ * producción los 8 `invoice.paid` que hubo.
+ */
+function makeStripeInvoiceFormaNueva(over: Partial<Stripe.Invoice> = {}): Stripe.Invoice {
+  const base = makeStripeInvoice(over) as unknown as Record<string, unknown>;
+  delete base['subscription'];
+  base['parent'] = {
+    type: 'subscription_details',
+    quote_details: null,
+    subscription_details: { subscription: 'sub_stripe_1', metadata: {} },
+  };
+  return base as unknown as Stripe.Invoice;
+}
+
 // ---------- Tests ----------
 
 describe('SubscriptionsService.startSubscription', () => {
@@ -792,6 +812,98 @@ describe('SubscriptionsService.handleWebhookEvent', () => {
     const ev = publisher.events.find((e) => e.name === 'subscriptions.subscription.activated');
     expect(ev).toBeTruthy();
     expect(ev!.payload['recovery']).toBe(false);
+  });
+
+  // --- Forma NUEVA de los objetos de Stripe (regresión de un fallo VIVO) ---
+  //
+  // Encontrado en producción el 16-ago-2026: la cuenta entregaba los webhooks
+  // con `2025-12-15.clover` y el código leía la forma de `2024-12-18.acacia`.
+  // Los handlers empezaban con `if (!invoice.subscription) return;`, así que
+  // TODOS los eventos de invoice se descartaban en silencio: cero facturas
+  // guardadas, el impago no marcaba PAST_DUE —quien dejaba de pagar conservaba
+  // el acceso— y el trial no convertía nunca. Cero errores en los logs.
+
+  it('invoice.paid en forma nueva (parent.subscription_details) SÍ se procesa', async () => {
+    const { service, prisma, publisher } = buildSystem();
+    seedPendiente(prisma);
+
+    await service.handleWebhookEvent(
+      {
+        id: 'evt_clover_paid',
+        type: 'invoice.paid',
+        data: { object: makeStripeInvoiceFormaNueva() },
+      } as unknown as Stripe.Event,
+      {},
+    );
+
+    expect(prisma.subs.get('s1')!.status).toBe('ACTIVE');
+    expect(prisma.invoices.size).toBe(1);
+    expect(publisher.events.some((e) => e.name === 'subscriptions.invoice.paid')).toBe(true);
+  });
+
+  it('invoice.payment_failed en forma nueva SÍ inicia el impago (si no, se cobra gratis para siempre)', async () => {
+    const { service, prisma } = buildSystem();
+    prisma.subs.set('s1', {
+      id: 's1',
+      tenantId: 't',
+      userId: 'u',
+      courseId: 'c1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      stripeCustomerId: 'cus_x',
+      stripePriceId: 'price_recurring',
+      status: 'ACTIVE',
+      unitAmount: 1999,
+      currency: 'eur',
+      interval: 'month',
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      gracePeriodEndsAt: null,
+      canceledAt: null,
+      canceledReason: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await service.handleWebhookEvent(
+      {
+        id: 'evt_clover_failed',
+        type: 'invoice.payment_failed',
+        data: { object: makeStripeInvoiceFormaNueva() },
+      } as unknown as Stripe.Event,
+      {},
+    );
+
+    expect(prisma.subs.get('s1')!.status).toBe('PAST_DUE');
+    expect(prisma.subs.get('s1')!.gracePeriodEndsAt).toBeInstanceOf(Date);
+  });
+
+  it('current_period_end solo dentro de items.data → la fecha de renovación se guarda igual', async () => {
+    const { service, prisma } = buildSystem();
+    seedPendiente(prisma);
+    const fin = Math.floor(Date.now() / 1000) + 86400 * 30;
+
+    await service.handleWebhookEvent(
+      {
+        id: 'evt_clover_updated',
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_stripe_1',
+            status: 'active',
+            customer: 'cus_x',
+            cancel_at_period_end: false,
+            // Sin `current_period_end` en la raíz: es el cambio de forma.
+            items: { data: [{ current_period_end: fin }] },
+            trial_end: null,
+          },
+        },
+      } as unknown as Stripe.Event,
+      {},
+    );
+
+    const sub = prisma.subs.get('s1')!;
+    expect(sub.currentPeriodEnd).toBeInstanceOf(Date);
+    expect(Math.floor(sub.currentPeriodEnd!.getTime() / 1000)).toBe(fin);
   });
 
   it('customer.subscription.deleted → CANCELED + emite canceled', async () => {
