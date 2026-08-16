@@ -52,6 +52,16 @@ export interface CreateCheckoutSessionParams {
   cancelUrl: string;
   customerEmail?: string;
   /**
+   * Deja que el comprador canjee un código promocional de Stripe en la pantalla
+   * de pago. Mismo parámetro y mismo nombre que en mod.subscriptions, que lo
+   * activa para la membresía: sin esto, la venta de cursos era el único sitio
+   * donde un código creado en el dashboard no se podía usar.
+   *
+   * Ojo, no es gratis en términos de conversión: el campo aparece siempre, y a
+   * quien no tiene código puede darle por irse a buscar uno.
+   */
+  allowPromotionCodes?: boolean;
+  /**
    * Metadata que viaja con la sesión y se replica en el webhook. Lo usamos
    * para reconciliar el order interno con la session de Stripe sin lookup
    * adicional. `userId` falta en el checkout PÚBLICO (comprador aún sin
@@ -137,6 +147,7 @@ export class StripeSdkAdapter implements StripeAdapter {
         success_url: p.successUrl,
         cancel_url: p.cancelUrl,
         customer_email: p.customerEmail,
+        ...(p.allowPromotionCodes ? { allow_promotion_codes: true } : {}),
         client_reference_id: p.metadata.orderId,
         metadata: { ...p.metadata },
         // Importante para reconciliar invoicing: pasamos el orderId en

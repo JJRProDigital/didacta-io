@@ -527,6 +527,12 @@ export class BillingService {
         successUrl: input.successUrl ?? this.urls.successUrl(input.courseId),
         cancelUrl: input.cancelUrl ?? this.urls.cancelUrl(input.courseId),
         customerEmail: input.userEmail || undefined,
+        // Paridad con la membresía (`membership.service.ts`), que lo activa
+        // desde siempre: los códigos promocionales se crean una vez en el
+        // dashboard de Stripe y valen para todo lo que vende el tenant. Sin
+        // esta línea, un código de campaña funcionaba en la suscripción y no
+        // en el curso suelto, que es justo donde se hacen las rebajas.
+        allowPromotionCodes: true,
         metadata: {
           tenantId: input.tenantId,
           courseId: input.courseId,
