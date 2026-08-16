@@ -576,15 +576,26 @@ export class SubscriptionsService {
       data,
     });
 
-    // Recovery: si la sub estaba PAST_DUE/UNPAID y vuelve a ACTIVE → notificar.
-    if ((sub.status === 'PAST_DUE' || sub.status === 'UNPAID') && newStatus === 'ACTIVE') {
+    // Llegar a ACTIVE desde un estado que no daba acceso tiene que CONCEDERLO.
+    // PENDING estaba fuera de esta lista y era un agujero silencioso al revés
+    // que los demás: la suscripción nace PENDING siempre que Stripe la deja
+    // `incomplete` (pago diferido, autenticación pendiente), y cuando el cobro
+    // entraba, la fila pasaba a ACTIVE pero nadie emitía `activated` — el
+    // bridge de grupos de acceso nunca se enteraba. **Cliente que paga y no
+    // recibe nada.** Solo lo tapaba que el único método de pago fuera tarjeta.
+    if (
+      (sub.status === 'PENDING' || sub.status === 'PAST_DUE' || sub.status === 'UNPAID') &&
+      newStatus === 'ACTIVE'
+    ) {
       await this.publisher.publish(sub.tenantId, sub.userId, EVENT.ACTIVATED, {
         subscriptionId: sub.id,
         courseId: sub.courseId,
         planId: sub.planId,
         userId: sub.userId,
         currentPeriodEnd: data['currentPeriodEnd'],
-        recovery: true,
+        // Desde PENDING no es recuperar nada: es la PRIMERA activación, la del
+        // alta cuyo cobro tardó en confirmarse.
+        recovery: sub.status !== 'PENDING',
       });
     }
 
@@ -651,8 +662,11 @@ export class SubscriptionsService {
 
     await this.upsertInvoice(sub.id, sub.tenantId, invoice, 'PAID');
 
-    // Recovery: si estaba PAST_DUE/UNPAID, esto la pone en ACTIVE.
-    if (sub.status === 'PAST_DUE' || sub.status === 'UNPAID') {
+    // Cobro entrante sobre una sub que no daba acceso: esto la pone ACTIVE.
+    // PENDING va con las otras dos por lo mismo que en `onSubscriptionUpdated`:
+    // es el estado del alta que Stripe dejó `incomplete`, y sin él un pago
+    // diferido que acaba entrando dejaba la membresía muerta para siempre.
+    if (sub.status === 'PENDING' || sub.status === 'PAST_DUE' || sub.status === 'UNPAID') {
       await this.prisma.modSubscriptionsSubscription.update({
         where: { id: sub.id },
         data: { status: 'ACTIVE', gracePeriodEndsAt: null, trialEndsAt: null },
@@ -662,7 +676,8 @@ export class SubscriptionsService {
         courseId: sub.courseId,
         planId: sub.planId,
         userId: sub.userId,
-        recovery: true,
+        // Ídem `onSubscriptionUpdated`: desde PENDING es la primera activación.
+        recovery: sub.status !== 'PENDING',
       });
     }
 

@@ -335,6 +335,9 @@ function membershipSession(
     customer: 'cus_1',
     customer_email: null,
     customer_details: { email: 'buyer@x.com', name: 'Búyer' },
+    // Stripe SIEMPRE lo manda. Va explícito porque el fulfillment falla
+    // cerrado: sin cobro resuelto la sub nace PENDING y no concede acceso.
+    payment_status: 'paid',
     ...overrides,
   } as unknown as Stripe.Checkout.Session;
 }
@@ -800,6 +803,37 @@ describe('MembershipService · fulfillment (webhook)', () => {
         payload: expect.objectContaining({ userId: 'user_1', planId, userCreated: true }),
       }),
     ]);
+  });
+
+  it('pago diferido sin cobrar (unpaid): la sub nace PENDING y NO se emite activated', async () => {
+    // `checkout.session.completed` con el dinero todavía en el aire (SEPA,
+    // transferencia). Antes esta fila nacía ACTIVE: membresía completa sin
+    // haber cobrado. El acceso lo concede después la confirmación de Stripe.
+    const provision = vi.fn(async () => ({ userId: 'user_1', created: true }));
+    await ctx.service.fulfillMembershipCheckout(
+      membershipSession({
+        metadata: { membership: '1', tenantId: TENANT, planId } as never,
+        payment_status: 'unpaid' as never,
+      }),
+      provision,
+    );
+
+    expect([...ctx.prisma.subs.values()][0]).toMatchObject({ status: 'PENDING' });
+    expect(ctx.pub.events).toHaveLength(0);
+  });
+
+  it('no_payment_required (trial o cupón del 100%) SÍ concede: no es un impago', async () => {
+    const provision = vi.fn(async () => ({ userId: 'user_1', created: true }));
+    await ctx.service.fulfillMembershipCheckout(
+      membershipSession({
+        metadata: { membership: '1', tenantId: TENANT, planId } as never,
+        payment_status: 'no_payment_required' as never,
+      }),
+      provision,
+    );
+
+    expect([...ctx.prisma.subs.values()][0]).toMatchObject({ status: 'ACTIVE' });
+    expect(ctx.pub.events).toHaveLength(1);
   });
 
   it('IDEMPOTENTE: el mismo stripeSubscriptionId dos veces no duplica user ni sub ni evento', async () => {

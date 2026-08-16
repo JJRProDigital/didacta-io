@@ -717,6 +717,83 @@ describe('SubscriptionsService.handleWebhookEvent', () => {
     expect(ev).toBeTruthy();
   });
 
+  // El alta cuyo cobro no era inmediato: Stripe deja la suscripción
+  // `incomplete` (→ PENDING) y confirma minutos u horas después. Si esa
+  // confirmación no emite `activated`, el bridge de grupos de acceso no se
+  // entera y el cliente paga sin recibir nada. Un caso por cada vía por la que
+  // Stripe puede traer esa confirmación.
+
+  function seedPendiente(prisma: ReturnType<typeof buildSystem>['prisma']): void {
+    prisma.subs.set('s1', {
+      id: 's1',
+      tenantId: 't',
+      userId: 'u',
+      courseId: 'c1',
+      stripeSubscriptionId: 'sub_stripe_1',
+      stripeCustomerId: 'cus_x',
+      stripePriceId: 'price_recurring',
+      status: 'PENDING',
+      unitAmount: 1999,
+      currency: 'eur',
+      interval: 'month',
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      gracePeriodEndsAt: null,
+      canceledAt: null,
+      canceledReason: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }
+
+  it('invoice.paid sobre una sub PENDING → ACTIVE + emite activated (no era recovery)', async () => {
+    const { service, prisma, publisher } = buildSystem();
+    seedPendiente(prisma);
+
+    await service.handleWebhookEvent(
+      {
+        id: 'evt_pend_invoice',
+        type: 'invoice.paid',
+        data: { object: makeStripeInvoice() },
+      } as unknown as Stripe.Event,
+      {},
+    );
+
+    expect(prisma.subs.get('s1')!.status).toBe('ACTIVE');
+    const ev = publisher.events.find((e) => e.name === 'subscriptions.subscription.activated');
+    expect(ev).toBeTruthy();
+    // Desde PENDING es la PRIMERA activación, no una recuperación de impago.
+    expect(ev!.payload['recovery']).toBe(false);
+  });
+
+  it('customer.subscription.updated de incomplete a active sobre PENDING → emite activated', async () => {
+    const { service, prisma, publisher } = buildSystem();
+    seedPendiente(prisma);
+
+    await service.handleWebhookEvent(
+      {
+        id: 'evt_pend_updated',
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_stripe_1',
+            status: 'active',
+            customer: 'cus_x',
+            cancel_at_period_end: false,
+            current_period_end: Math.floor(Date.now() / 1000) + 86400,
+            trial_end: null,
+          },
+        },
+      } as unknown as Stripe.Event,
+      {},
+    );
+
+    expect(prisma.subs.get('s1')!.status).toBe('ACTIVE');
+    const ev = publisher.events.find((e) => e.name === 'subscriptions.subscription.activated');
+    expect(ev).toBeTruthy();
+    expect(ev!.payload['recovery']).toBe(false);
+  });
+
   it('customer.subscription.deleted → CANCELED + emite canceled', async () => {
     const { service, prisma, publisher } = buildSystem();
     prisma.subs.set('s1', {

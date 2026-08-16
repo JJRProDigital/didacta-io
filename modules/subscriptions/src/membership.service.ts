@@ -553,6 +553,24 @@ export class MembershipService {
     // fin estimado es now + trialDays; Stripe (customer.subscription.updated)
     // converge el valor real después. Sin trial → ACTIVE directo.
     const trialing = plan.trialDays > 0;
+
+    // EL DINERO PRIMERO, igual que en mod.billing. `checkout.session.completed`
+    // dice que la persona terminó el formulario, no que hayamos cobrado: con un
+    // método de notificación diferida (SEPA, transferencia) llega `unpaid` y el
+    // cobro se resuelve después. Esta fila nacía ACTIVE sin mirarlo — acceso
+    // completo a la membresía sin que hubiera entrado un euro.
+    //
+    // Hoy es inalcanzable porque el checkout de suscripciones solo acepta
+    // tarjeta; se arregla ANTES de abrir métodos de pago, no después. Un trial
+    // no se ve afectado: Stripe manda `no_payment_required` cuando no cobra al
+    // dar de alta, y eso cuenta como resuelto.
+    //
+    // Sin cobro, la sub nace PENDING y NO se emite `membership.activated`: el
+    // acceso lo concede después `onSubscriptionUpdated`/`onInvoicePaid` cuando
+    // Stripe confirme. El user sí se crea —la fila necesita dueño—, así que
+    // existe una cuenta sin acceso hasta que el pago entre; es el precio de
+    // poder enlazar el pago con su comprador.
+    const cobrado = isMembershipPaymentSettled(session);
     const sub = await this.prisma.modSubscriptionsSubscription.create({
       data: {
         tenantId,
@@ -563,13 +581,18 @@ export class MembershipService {
         stripeCustomerId:
           typeof session.customer === 'string' ? session.customer : (session.customer?.id ?? ''),
         stripePriceId: plan.stripePriceId ?? '',
-        status: trialing ? 'TRIALING' : 'ACTIVE',
-        trialEndsAt: trialing ? new Date(Date.now() + plan.trialDays * 24 * 60 * 60 * 1000) : null,
+        status: cobrado ? (trialing ? 'TRIALING' : 'ACTIVE') : 'PENDING',
+        trialEndsAt:
+          cobrado && trialing ? new Date(Date.now() + plan.trialDays * 24 * 60 * 60 * 1000) : null,
         unitAmount: plan.amountCents,
         currency: plan.currency,
         interval: intervalLabel(plan.intervalMonths),
       },
     });
+
+    if (!cobrado) {
+      return { subscriptionId: sub.id, userId, userCreated: created };
+    }
 
     // Atribución opaca (p.ej. referidos): si el checkout llevó referralCode,
     // vuelve en el payload para que el consumidor interesado (bridge del host)
@@ -650,6 +673,24 @@ export class MembershipService {
 type MembershipSubscriptionRow = Awaited<
   ReturnType<PrismaClient['modSubscriptionsSubscription']['create']>
 >;
+
+/**
+ * ¿El checkout de esta membresía dejó el dinero resuelto?
+ *
+ * `paid` es el cobro normal. `no_payment_required` es todo lo que no cobra al
+ * dar de alta: un plan con días de prueba y un cupón del 100%. Los dos son
+ * altas legítimas y tienen que conceder acceso.
+ *
+ * Lo demás —`unpaid`, o el campo ausente— cuenta como NO cobrado. Falla
+ * cerrado: conceder de menos se corrige cuando Stripe confirma; conceder de
+ * más es regalar la membresía.
+ *
+ * Gemela de `isPaymentSettled` de mod.billing. Está duplicada a propósito: los
+ * módulos no comparten código entre sí (contrato modular), y son ocho líneas.
+ */
+function isMembershipPaymentSettled(session: Stripe.Checkout.Session): boolean {
+  return session.payment_status === 'paid' || session.payment_status === 'no_payment_required';
+}
 
 /**
  * Etiqueta informativa para la columna `interval` (texto libre): los periodos
