@@ -229,6 +229,18 @@ export interface WebhooksInfoResponse {
  * Catálogo de eventos publicados por los bridges existentes. Mantenerlo
  * sincronizado a mano es aceptable para el piloto — cuando crezca, el
  * registry de módulos puede declarar sus events y este array se autogenera.
+ *
+ * La lista es doblemente vinculante: el bridge SOLO se suscribe a lo que hay
+ * aquí (`webhooks.bridge.ts`) y la UI SOLO ofrece esto en el multi-select
+ * (`knownEventTypes` de la respuesta de info). Una entrada de más es un evento
+ * al que un admin puede suscribirse y que nunca llegará; una de menos es un
+ * evento que se publica y que nadie de fuera puede recibir. Antes de tocarla,
+ * comprobar que cada entrada tiene un `publish()` real detrás.
+ *
+ * `billing.order.*` son las de la compra de un curso suelto (`mod.billing`).
+ * Van las dos: quien vende desde fuera necesita `completed` para dar el acceso
+ * y `refunded` para quitarlo. Con solo la primera, el cableado queda a medias y
+ * el alumno se queda dentro después de que le devuelvan el dinero.
  */
 export const KNOWN_EVENT_TYPES = [
   '*',
@@ -237,8 +249,8 @@ export const KNOWN_EVENT_TYPES = [
   'learning.lesson.completed',
   'community.post.created',
   'community.comment.created',
-  'billing.subscription.created',
-  'billing.subscription.cancelled',
+  'billing.order.completed',
+  'billing.order.refunded',
   'fundae.group.closed',
   'assessments.attempt.submitted',
 ] as const;
